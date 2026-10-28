@@ -7,7 +7,7 @@ const MODEL_BASE = params.get("model") || "https://huggingface.co/alexjhuang/gem
 const MODEL_FILE = "model_q4f16.onnx";
 const $ = id => document.getElementById(id);
 const st = $("status"), prog = $("prog");
-let session, tok, iv, io, stopFlag = false;
+let session, tok, iv, io, kvShape, stopFlag = false;
 
 ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
 
@@ -48,6 +48,7 @@ $("load").onclick = async () => {
     const [tj, tc] = await Promise.all([fetch(MODEL_BASE + "tokenizer.json").then(r => r.json()), fetch(MODEL_BASE + "tokenizer_config.json").then(r => r.json())]);
     tok = new GemmaTokenizer(tj, tc);
     const manifest = await (await fetch(MODEL_BASE + "manifest.json")).json();
+    const cfg = await (await fetch(MODEL_BASE + "config.json")).json(); kvShape = [1, cfg.num_key_value_heads, 0, cfg.head_dim];
     const graph = await fetchCached(MODEL_BASE + MODEL_FILE, "graph"); const externalData = [];
     for (const [i, name] of manifest.shards.entries()) externalData.push({ path: name, data: await fetchCached(MODEL_BASE + name, `weights ${i + 1}/${manifest.shards.length}`) });
     st.textContent = `Creating ${ep} session (compiling kernels, 10-60 s)...`;
@@ -85,8 +86,7 @@ const chat = p => `<bos><start_of_turn>user\n${p}<end_of_turn>\n<start_of_turn>m
 async function* generate(prompt, ivT, maxNew) {
   const enc = tok(chat(prompt), { add_special_tokens: false });
   let ids = Array.from(enc.input_ids.data, Number); const T0 = ids.length;
-  const kvDims = io.kvDims; // [batch, heads, seq, dim]
-  let past = {}; for (const n of io.ins.filter(n => n.startsWith("past_key_values"))) past[n] = new ort.Tensor(io.kvType, io.kvType === "float16" ? new Uint16Array(0) : new Float32Array(0), [1, kvDims[1], 0, kvDims[3]]);
+  let past = {}; for (const n of io.ins.filter(n => n.startsWith("past_key_values"))) past[n] = new ort.Tensor(io.kvType, io.kvType === "float16" ? new Uint16Array(0) : new Float32Array(0), kvShape);
   let cur = ids, pos = 0, out = [], t0 = performance.now();
   for (let step = 0; step < maxNew && !stopFlag; step++) {
     const S = cur.length, total = pos + S;
