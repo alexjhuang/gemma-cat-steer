@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Cat suppression demo: Gemma-2-2B in your browser</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="coi-serviceworker.js"></script>
+<style>
+ :root{--bg:#0f1115;--panel:#171a21;--ink:#e8e8ea;--mute:#8b93a7;--acc:#7aa2f7;--warn:#f7768e;--ok:#9ece6a}
+ body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+ main{max-width:960px;margin:0 auto;padding:24px 16px 48px}
+ h1{font-size:22px;margin:0 0 4px} .sub{color:var(--mute);margin:0 0 18px}
+ .panel{background:var(--panel);border:1px solid #262a35;border-radius:10px;padding:14px 16px;margin-bottom:14px}
+ label{display:block;color:var(--mute);font-size:13px;margin:8px 0 4px}
+ select,input[type=range],textarea,button{font:inherit}
+ select,textarea{width:100%;background:#0f1115;color:var(--ink);border:1px solid #2a2f3b;border-radius:8px;padding:8px}
+ textarea{min-height:64px;resize:vertical}
+ button{background:var(--acc);color:#0b0e14;border:0;border-radius:8px;padding:9px 16px;font-weight:600;cursor:pointer}
+ button:disabled{opacity:.45;cursor:default}
+ .row{display:flex;gap:12px;flex-wrap:wrap;align-items:end} .row>div{flex:1;min-width:200px}
+ .out{white-space:pre-wrap;min-height:120px;background:#0f1115;border:1px solid #2a2f3b;border-radius:8px;padding:10px;font-family:ui-monospace,Menlo,monospace;font-size:14px}
+ .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px} @media(max-width:720px){.grid{grid-template-columns:1fr}}
+ .tag{display:inline-block;font-size:12px;color:var(--mute);border:1px solid #2a2f3b;border-radius:999px;padding:2px 8px;margin-right:6px}
+ #status{color:var(--mute);font-size:13px} progress{width:100%;height:8px}
+ .warn{color:var(--warn)} .ok{color:var(--ok)} a{color:var(--acc)}
+ details summary{cursor:pointer;color:var(--mute)}
+</style></head>
+<body><main>
+<h1>Making Gemma forget cats, live in your browser</h1>
+<p class="sub">Gemma-2-2B-it runs locally on your GPU (WebGPU) or CPU (WASM). Nothing you type leaves your device.
+Pick an intervention from the <a href="https://github.com/alexjhuang/qwen-steer/blob/suppress-cats/GEMMA_REPORT.md">cat-suppression study</a> and compare it with the unmodified model side by side.</p>
+
+<div class="panel">
+ <div class="row">
+  <div><label>Backend</label><select id="backend"><option value="auto">auto (WebGPU if available)</option><option value="webgpu">WebGPU</option><option value="wasm">WASM (CPU)</option></select></div>
+  <div><label>Max new tokens</label><select id="maxtok"><option>48</option><option selected>96</option><option>160</option></select></div>
+  <div><button id="load">Load model (~2.6 GB, cached after first visit)</button></div>
+ </div>
+ <div id="status" style="margin-top:10px">Not loaded.</div><progress id="prog" value="0" max="1" hidden></progress>
+</div>
+
+<div class="panel">
+ <div class="row">
+  <div><label>Intervention</label>
+   <select id="mode">
+    <option value="none">none (baseline only)</option>
+    <option value="clamp8" selected>clamp the cat feature at layer 8 (negative push)</option>
+    <option value="clamp8_14">clamp cat features at layers 8 and 14</option>
+    <option value="ablate">project out the cat direction, layers 8-25</option>
+   </select></div>
+  <div><label>Strength <span id="strv">20</span></label><input id="strength" type="range" min="5" max="60" step="5" value="20"></div>
+ </div>
+ <label>Prompt</label>
+ <textarea id="prompt">What animal says meow? Answer in a few words.</textarea>
+ <div class="row" style="margin-top:10px">
+  <div style="flex:0"><button id="go" disabled>Generate</button></div>
+  <div style="flex:0"><button id="stop" disabled style="background:#2a2f3b;color:var(--ink)">Stop</button></div>
+  <div><span class="tag" id="tps"></span></div>
+ </div>
+ <details style="margin-top:8px"><summary>Try these</summary>
+  <p class="sub">What is a baby cat called? · Write a short story about a cat. · Complete the phrase: "curiosity killed the ___". · ¿Qué animal dice miau? · Explain why cats purr.</p></details>
+</div>
+
+<div class="grid">
+ <div class="panel"><div class="tag">baseline</div><div class="out" id="outA"></div></div>
+ <div class="panel"><div class="tag" id="tagB">intervened</div><div class="out" id="outB"></div></div>
+</div>
+
+<div class="panel">
+ <details><summary>How it works</summary>
+  <p class="sub">The model is a 4-bit ONNX export of Gemma-2-2B-it with a few extra nodes compiled into every decoder layer. Each layer can subtract a direction from the residual stream, and layers 8 and 14 can additionally remove and push negative one sparse-autoencoder feature (Gemma Scope, 65k width). The features and the direction were found by contrasting cat sentences with matched dog sentences. With all inputs zero the graph is the stock model, which is what the left column runs. Full method, numbers and caveats in the <a href="https://github.com/alexjhuang/qwen-steer/blob/suppress-cats/GEMMA_REPORT.md">report</a>.</p>
+  <p class="sub warn">Outputs are deliberately altered research artefacts. Strong settings produce substitutions ("Dog") and occasional nonsense; that is the point.</p>
+ </details>
+</div>
+</main>
+<script type="module" src="app.js"></script>
+</body></html>
