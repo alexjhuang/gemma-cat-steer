@@ -4,7 +4,6 @@ import { GemmaTokenizer } from "https://cdn.jsdelivr.net/npm/@huggingface/transf
 // Where the model lives. Override with ?model=https://.../ to point at another host.
 const params = new URLSearchParams(location.search);
 const MODEL_BASE = params.get("model") || "https://huggingface.co/alexjhuang/gemma-2-2b-it-cat-steer-onnx/resolve/main/";
-const MODEL_FILE = "model_q4f16.onnx";
 const $ = id => document.getElementById(id);
 const st = $("status"), prog = $("prog");
 let session, tok, iv, io, kvShape, stopFlag = false;
@@ -48,14 +47,21 @@ $("load").onclick = async () => {
     iv = await (await fetch("interventions.json")).json();
     const [tj, tc] = await Promise.all([fetch(MODEL_BASE + "tokenizer.json").then(r => r.json()), fetch(MODEL_BASE + "tokenizer_config.json").then(r => r.json())]);
     tok = new GemmaTokenizer(tj, tc);
-    const manifest = await (await fetch(MODEL_BASE + "manifest.json")).json();
+    const manifests = await (await fetch(MODEL_BASE + "manifest.json")).json();
+    const manifest = manifests[ep] ?? manifests.webgpu ?? manifests;   // q4f16 for WebGPU, q4 (fp32 activations) for WASM
     const cfg = await (await fetch(MODEL_BASE + "config.json")).json(); kvShape = [1, cfg.num_key_value_heads, 0, cfg.head_dim];
-    const graph = await fetchCached(MODEL_BASE + MODEL_FILE, "graph"); const externalData = [];
+    const graph = await fetchCached(MODEL_BASE + manifest.model, "graph"); const externalData = [];
     for (const [i, name] of manifest.shards.entries()) externalData.push({ path: name, data: await fetchCached(MODEL_BASE + name, `weights ${i + 1}/${manifest.shards.length}`) });
     st.textContent = `Creating ${ep} session (compiling kernels, 10-60 s)...`;
     const opts = { executionProviders: [ep], externalData, graphOptimizationLevel: "all" };
     try { session = await ort.InferenceSession.create(graph, opts); }
-    catch (e) { if (ep === "webgpu") { console.warn("WebGPU session failed, falling back to WASM", e); st.textContent = "WebGPU failed; creating WASM session..."; ort.env.wasm.numThreads = Math.min(8, navigator.hardwareConcurrency || 4); session = await ort.InferenceSession.create(graph, { ...opts, executionProviders: ["wasm"] }); } else throw e; }
+    catch (e) {
+      if (ep !== "webgpu" || !manifests.wasm) throw e;
+      console.warn("WebGPU session failed, falling back to WASM", e); st.textContent = "WebGPU failed; loading the WASM variant...";
+      ort.env.wasm.numThreads = Math.min(8, navigator.hardwareConcurrency || 4); const mw = manifests.wasm; const ext = [];
+      const g2 = await fetchCached(MODEL_BASE + mw.model, "graph (wasm)"); for (const [i, name] of mw.shards.entries()) ext.push({ path: name, data: await fetchCached(MODEL_BASE + name, `weights ${i + 1}/${mw.shards.length} (wasm)`) });
+      session = await ort.InferenceSession.create(g2, { executionProviders: ["wasm"], externalData: ext, graphOptimizationLevel: "all" });
+    }
     io = introspect(session);
     st.innerHTML = `<span class="ok">Ready on ${session.handler?.backend?.name ?? ep}.</span> ${io.nLayers} layers, KV dtype ${io.kvType}.`; prog.hidden = true;
     $("go").disabled = false;
@@ -115,6 +121,6 @@ $("go").onclick = async () => {
   try {
     for await (const r of generate(prompt, interventionTensors("none", 0), maxNew)) { $("outA").textContent = r.text; $("tps").textContent = `${r.tps.toFixed(1)} tok/s`; }
     if (mode !== "none") for await (const r of generate(prompt, interventionTensors(mode, strength), maxNew)) { $("outB").textContent = r.text; $("tps").textContent = `${r.tps.toFixed(1)} tok/s`; }
-  } catch (e) { $("outB").textContent = "Error: " + e.message; console.error(e); }
+  } catch (e) { $("outB").textContent = "Error: " + (e?.message ?? String(e)); console.error(e); }
   $("go").disabled = false; $("stop").disabled = true;
 };
