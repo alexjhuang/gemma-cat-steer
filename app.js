@@ -53,27 +53,25 @@ $("load").onclick = async () => {
     const graph = await fetchCached(MODEL_BASE + manifest.model, "graph"); const externalData = [];
     for (const [i, name] of manifest.shards.entries()) externalData.push({ path: name, data: await fetchCached(MODEL_BASE + name, `weights ${i + 1}/${manifest.shards.length}`) });
     st.textContent = `Creating ${ep} session (compiling kernels, 10-60 s)...`;
-    const opts = { executionProviders: [ep], externalData, graphOptimizationLevel: "all" };
+    const opts = { executionProviders: [ep], externalData, graphOptimizationLevel: "all" }; let usedManifest = manifest;
     try { session = await ort.InferenceSession.create(graph, opts); }
     catch (e) {
       if (ep !== "webgpu" || !manifests.wasm) throw e;
       console.warn("WebGPU session failed, falling back to WASM", e); st.textContent = "WebGPU failed; loading the WASM variant...";
       ort.env.wasm.numThreads = Math.min(8, navigator.hardwareConcurrency || 4); const mw = manifests.wasm; const ext = [];
       const g2 = await fetchCached(MODEL_BASE + mw.model, "graph (wasm)"); for (const [i, name] of mw.shards.entries()) ext.push({ path: name, data: await fetchCached(MODEL_BASE + name, `weights ${i + 1}/${mw.shards.length} (wasm)`) });
-      session = await ort.InferenceSession.create(g2, { executionProviders: ["wasm"], externalData: ext, graphOptimizationLevel: "all" });
+      session = await ort.InferenceSession.create(g2, { executionProviders: ["wasm"], externalData: ext, graphOptimizationLevel: "all" }); usedManifest = mw;
     }
-    io = introspect(session);
+    io = introspect(session, usedManifest.dtype ?? (usedManifest.model.includes("f16") ? "float16" : "float32"));
     st.innerHTML = `<span class="ok">Ready on ${session.handler?.backend?.name ?? ep}.</span> ${io.nLayers} layers, KV dtype ${io.kvType}.`; prog.hidden = true;
     $("go").disabled = false;
   } catch (e) { st.innerHTML = `<span class="warn">Load failed: ${e.message}</span>`; $("load").disabled = false; console.error(e); }
 };
 
-function introspect(s) {
+function introspect(s, dtype) {
   const ins = s.inputNames, outs = s.outputNames;
   const kv = ins.filter(n => n.startsWith("past_key_values")); const nLayers = kv.length / 2;
-  const kvMeta = s.inputMetadata?.[kv[0]] ?? null;
-  return { ins, outs, nLayers, kvType: kvMeta?.type ?? "float16", kvDims: kvMeta?.dimensions ?? kvMeta?.shape ?? null,
-           hasPos: ins.includes("position_ids"), hasCachePos: ins.includes("cache_position"), f16io: (s.inputMetadata?.["ablate_dir"]?.type ?? "float16") === "float16" };
+  return { ins, outs, nLayers, kvType: dtype, hasPos: ins.includes("position_ids"), hasCachePos: ins.includes("cache_position"), f16io: dtype === "float16" };
 }
 
 function interventionTensors(mode, strength) {
