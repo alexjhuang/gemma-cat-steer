@@ -43,7 +43,8 @@ $("load").onclick = async () => {
     $("load").disabled = true;
     const want = $("backend").value, hasGPU = !!navigator.gpu && (await navigator.gpu.requestAdapter?.()) != null;
     const ep = want === "wasm" ? "wasm" : (want === "webgpu" || hasGPU) ? "webgpu" : "wasm";
-    if (ep === "wasm") { ort.env.wasm.numThreads = Math.min(8, navigator.hardwareConcurrency || 4); ort.env.wasm.proxy = true; }
+    ort.env.wasm.proxy = false;   // the proxy worker would have to receive ~2 GB of weights via postMessage
+    if (ep === "wasm") ort.env.wasm.numThreads = Math.min(8, navigator.hardwareConcurrency || 4);
     iv = await (await fetch("interventions.json")).json();
     const [tj, tc] = await Promise.all([fetch(MODEL_BASE + "tokenizer.json").then(r => r.json()), fetch(MODEL_BASE + "tokenizer_config.json").then(r => r.json())]);
     tok = new GemmaTokenizer(tj, tc);
