@@ -3,12 +3,21 @@ import { GemmaTokenizer } from "https://cdn.jsdelivr.net/npm/@huggingface/transf
 
 // Where the model lives. Override with ?model=https://.../ to point at another host.
 const params = new URLSearchParams(location.search);
-const MODEL_BASE = params.get("model") || "https://huggingface.co/alexjhuang/gemma-2-2b-it-cat-steer-onnx/resolve/main/";
+const MODEL_BASE = params.get("model") || "https://raw.githubusercontent.com/alexjhuang/gemma-cat-steer-weights/main/";
 const $ = id => document.getElementById(id);
 const st = $("status"), prog = $("prog");
 let session, tok, iv, io, kvShape, stopFlag = false;
 
 ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
+if (params.get("debug")) { ort.env.logLevel = "verbose"; ort.env.debug = true; }
+
+async function fetchFile(manifests, name, label) {
+  const entry = manifests.files?.[name];
+  if (!entry || entry.chunks.length === 1 && entry.chunks[0] === name) return fetchCached(MODEL_BASE + name, label);
+  const out = new Uint8Array(entry.size); let off = 0;
+  for (const [i, c] of entry.chunks.entries()) { const part = await fetchCached(MODEL_BASE + c, `${label} part ${i + 1}/${entry.chunks.length}`); out.set(part, off); off += part.length; }
+  return out;
+}
 
 async function fetchCached(url, label) {
   const cache = await caches.open("gemma-cat-demo-v1");
@@ -50,8 +59,8 @@ $("load").onclick = async () => {
     const manifests = await (await fetch(MODEL_BASE + "manifest.json")).json();
     const manifest = manifests[ep] ?? manifests.webgpu ?? manifests;   // q4f16 for WebGPU, q4 (fp32 activations) for WASM
     const cfg = await (await fetch(MODEL_BASE + "config.json")).json(); kvShape = [1, cfg.num_key_value_heads, 0, cfg.head_dim];
-    const graph = await fetchCached(MODEL_BASE + manifest.model, "graph"); const externalData = [];
-    for (const [i, name] of manifest.shards.entries()) externalData.push({ path: name, data: await fetchCached(MODEL_BASE + name, `weights ${i + 1}/${manifest.shards.length}`) });
+    const graph = await fetchFile(manifests, manifest.model, "graph"); const externalData = [];
+    for (const [i, name] of manifest.shards.entries()) externalData.push({ path: name, data: await fetchFile(manifests, name, `weights ${i + 1}/${manifest.shards.length}`) });
     st.textContent = `Creating ${ep} session (compiling kernels, 10-60 s)...`;
     const opts = { executionProviders: [ep], externalData, graphOptimizationLevel: "all" }; let usedManifest = manifest;
     try { session = await ort.InferenceSession.create(graph, opts); }
@@ -59,7 +68,7 @@ $("load").onclick = async () => {
       if (ep !== "webgpu" || !manifests.wasm) throw e;
       console.warn("WebGPU session failed, falling back to WASM", e); st.textContent = "WebGPU failed; loading the WASM variant...";
       ort.env.wasm.numThreads = Math.min(8, navigator.hardwareConcurrency || 4); const mw = manifests.wasm; const ext = [];
-      const g2 = await fetchCached(MODEL_BASE + mw.model, "graph (wasm)"); for (const [i, name] of mw.shards.entries()) ext.push({ path: name, data: await fetchCached(MODEL_BASE + name, `weights ${i + 1}/${mw.shards.length} (wasm)`) });
+      const g2 = await fetchFile(manifests, mw.model, "graph (wasm)"); for (const [i, name] of mw.shards.entries()) ext.push({ path: name, data: await fetchFile(manifests, name, `weights ${i + 1}/${mw.shards.length} (wasm)`) });
       session = await ort.InferenceSession.create(g2, { executionProviders: ["wasm"], externalData: ext, graphOptimizationLevel: "all" }); usedManifest = mw;
     }
     io = introspect(session, usedManifest.dtype ?? (usedManifest.model.includes("f16") ? "float16" : "float32"));
