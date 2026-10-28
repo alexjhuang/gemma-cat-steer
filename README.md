@@ -1,16 +1,22 @@
-# Cat-suppression demo (runs in the browser)
+# Making Gemma forget cats, in your browser
 
-Static page for GitHub Pages. Loads a 4-bit ONNX export of Gemma-2-2B-it (~2.6 GB, cached by the
-browser after the first visit) and runs it on WebGPU, falling back to WASM. The ONNX graph carries
-the interventions from the cat study as extra inputs: a per-layer direction to project out, and one
-SAE feature per clamp slot at layers 8 and 14 to remove and push negative. Zero inputs reproduce the
-stock model, so one file serves the baseline and the intervened column.
+Live: https://alexjhuang.github.io/gemma-cat-steer/
 
-Files
-- `index.html`, `app.js`: page and generation loop (onnxruntime-web, greedy decoding, KV cache).
-- `interventions.json`: cat direction and the two cat features (258 KB), written by `scripts/demo_export_tensors.py`.
-- `coi-serviceworker.js`: adds COOP/COEP headers on GitHub Pages so multithreaded WASM works.
-- Model files are hosted on the Hugging Face Hub (see `MODEL_BASE` in `app.js`); override with `?model=<url>/`.
+Gemma-2-2B-it runs on your own device through onnxruntime-web: WebGPU when the browser has it,
+WASM on the CPU otherwise. Nothing you type leaves the machine. Pick an intervention from the
+cat-suppression study and compare it with the unmodified model side by side.
 
-Build (see `scripts/`): `optimum-cli export onnx` -> `onnx_surgery.py` -> `onnx_quantize.py` (q4 weights,
-fp16 activations) -> `onnx_test.py` (CPU check) -> `demo_serve_test.py` (headless browser check).
+What you need
+- A desktop browser with WebGPU (Chrome or Edge 113+, Safari 26+, Firefox 141+ on Windows) for the
+  fast path, or any modern browser for the CPU path.
+- About 2.2 GB of download on the first visit (cached afterwards when the browser allows it) and
+  roughly 4 GB of free RAM. Phones are not supported.
+
+How it works
+The model is a 4-bit ONNX export with extra inputs compiled into every decoder layer: a direction to
+project out of the residual stream, and at layers 8 and 14 one Gemma Scope sparse-autoencoder
+feature to remove and push negative. Zero inputs reproduce the stock model. The features and the
+direction come from contrasting cat sentences with matched dog sentences; the study, numbers and
+caveats are in https://github.com/alexjhuang/qwen-steer/blob/suppress-cats/GEMMA_REPORT.md.
+
+Model files: https://github.com/alexjhuang/gemma-cat-steer-weights (Gemma Terms of Use apply).
