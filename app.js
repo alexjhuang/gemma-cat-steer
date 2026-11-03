@@ -4,7 +4,6 @@ import { GemmaTokenizer } from "https://cdn.jsdelivr.net/npm/@huggingface/transf
 // Where the model lives. Override with ?model=https://.../ to point at another host.
 const params = new URLSearchParams(location.search);
 const MODEL_BASE = params.get("model") || "https://raw.githubusercontent.com/alexjhuang/gemma-cat-steer-weights/main/";
-const GRAPH_VERSION = 2;   // bump when the .onnx graph files change (shards are content-stable)
 const $ = id => document.getElementById(id);
 const st = $("status"), prog = $("prog");
 let session, tok, iv, io, kvShape, stopFlag = false;
@@ -13,27 +12,38 @@ ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/di
 if (params.get("debug")) { ort.env.logLevel = "verbose"; ort.env.debug = true; }
 
 async function fetchFile(manifests, name, label) {
-  const entry = manifests.files?.[name];
-  const ver = name.endsWith(".onnx") ? `?v=${GRAPH_VERSION}` : "";   // graph files change between releases; shards do not
-  if (!entry || entry.chunks.length === 1 && entry.chunks[0] === name) return fetchCached(MODEL_BASE + name + ver, label);
+  const entry = manifests.files?.[name], hashes = manifests.hashes ?? {};
+  if (!entry || entry.chunks.length === 1 && entry.chunks[0] === name) return fetchCached(MODEL_BASE + name, label, hashes[name]);
   const out = new Uint8Array(entry.size); let off = 0;
-  for (const [i, c] of entry.chunks.entries()) { const part = await fetchCached(MODEL_BASE + c, `${label} part ${i + 1}/${entry.chunks.length}`); out.set(part, off); off += part.length; }
+  for (const [i, c] of entry.chunks.entries()) { const part = await fetchCached(MODEL_BASE + c, `${label} part ${i + 1}/${entry.chunks.length}`, hashes[c]); out.set(part, off); off += part.length; }
   return out;
 }
 
-async function fetchCached(url, label) {
+const sha256hex = async buf => [...new Uint8Array(await crypto.subtle.digest("SHA-256", buf))].map(b => b.toString(16).padStart(2, "0")).join("");
+let verified = 0;
+
+// Returns the bytes for `url`. If `expected` (sha256 hex from the manifest) is given, a cached copy
+// whose hash does not match is evicted and the file is refetched past the CDN cache; a network copy
+// that does not match is an error (the CDN is still serving an old version; retry later).
+async function fetchCached(url, label, expected) {
   const cache = await caches.open("gemma-cat-demo-v2");
   let r = await cache.match(url);
+  if (r && expected) {
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    if (await sha256hex(bytes) === expected) { verified++; st.textContent = `Loading ${label} from cache (verified)`; return bytes; }
+    console.warn("stale cache entry, refetching", url); await cache.delete(url); r = null; url += (url.includes("?") ? "&" : "?") + "h=" + expected.slice(0, 12);
+  }
   if (!r) {
     r = await fetch(url);
     if (!r.ok) throw new Error(`${label}: HTTP ${r.status}`);
     const total = +r.headers.get("content-length") || 0, reader = r.body.getReader(), chunks = []; let got = 0;
     prog.hidden = false;
     for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; if (total) prog.value = got / total; st.textContent = `Downloading ${label}: ${(got / 1e6).toFixed(0)} MB`; }
-    const blob = new Blob(chunks);
-    try { await cache.put(url, new Response(blob, { headers: { "content-length": String(blob.size) } })); }
+    const blob = new Blob(chunks); const bytes = new Uint8Array(await blob.arrayBuffer());
+    if (expected) { const h = await sha256hex(bytes); if (h !== expected) throw new Error(`${label}: downloaded file does not match the manifest hash (CDN may still serve an old copy; retry in a few minutes)`); verified++; }
+    try { await cache.put(url.split("?")[0], new Response(blob, { headers: { "content-length": String(blob.size) } })); }
     catch (e) { console.warn("cache put failed (quota?); continuing without cache", e); }
-    return new Uint8Array(await blob.arrayBuffer());
+    return bytes;
   }
   st.textContent = `Loading ${label} from cache`;
   return new Uint8Array(await r.arrayBuffer());
@@ -58,7 +68,7 @@ $("load").onclick = async () => {
     iv = await (await fetch("interventions.json")).json();
     const [tj, tc] = await Promise.all([fetch(MODEL_BASE + "tokenizer.json").then(r => r.json()), fetch(MODEL_BASE + "tokenizer_config.json").then(r => r.json())]);
     tok = new GemmaTokenizer(tj, tc);
-    const manifests = await (await fetch(MODEL_BASE + "manifest.json")).json();
+    const manifests = await (await fetch(MODEL_BASE + "manifest.json?t=" + Date.now(), { cache: "no-store" })).json();   // always fresh: it carries the hashes
     const manifest = manifests[ep] ?? manifests.webgpu ?? manifests;   // q4f16 for WebGPU, q4 (fp32 activations) for WASM
     const cfg = await (await fetch(MODEL_BASE + "config.json")).json(); kvShape = [1, cfg.num_key_value_heads, 0, cfg.head_dim];
     const graph = await fetchFile(manifests, manifest.model, "graph"); const externalData = [];
@@ -74,7 +84,7 @@ $("load").onclick = async () => {
       session = await ort.InferenceSession.create(g2, { executionProviders: ["wasm"], externalData: ext, graphOptimizationLevel: "all" }); usedManifest = mw;
     }
     io = introspect(session, usedManifest.dtype ?? (usedManifest.model.includes("f16") ? "float16" : "float32"));
-    st.innerHTML = `<span class="ok">Ready on ${session.handler?.backend?.name ?? ep}.</span> ${io.nLayers} layers, KV dtype ${io.kvType}.` + (io.hasResid ? "" : ` <span class="warn">This graph has no activation outputs (old cached copy); views are off. Clear site data and reload to get them.</span>`); prog.hidden = true;
+    st.innerHTML = `<span class="ok">Ready on ${session.handler?.backend?.name ?? ep}.</span> ${io.nLayers} layers, KV dtype ${io.kvType}, ${verified} files verified by SHA-256.` + (io.hasResid ? "" : ` <span class="warn">This graph has no activation outputs (old cached copy); views are off. Clear site data and reload to get them.</span>`); prog.hidden = true;
     if (!io.hasResid) { $("viz").checked = false; $("viz").disabled = true; }
     $("go").disabled = false;
   } catch (e) { st.innerHTML = `<span class="warn">Load failed: ${e.message}</span>`; $("load").disabled = false; console.error(e); }
