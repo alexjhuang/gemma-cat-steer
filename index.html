@@ -20,6 +20,15 @@
  .tag{display:inline-block;font-size:12px;color:var(--mute);border:1px solid #2a2f3b;border-radius:999px;padding:2px 8px;margin-right:6px}
  #status{color:var(--mute);font-size:13px} progress{width:100%;height:8px}
  .warn{color:var(--warn)} .ok{color:var(--ok)} a{color:var(--acc)}
+ .strip{display:flex;flex-wrap:wrap;gap:2px;margin-top:8px;font:12px ui-monospace,Menlo,monospace}
+ .strip span{padding:1px 3px;border-radius:3px;background:rgba(247,118,142,var(--a,0));border-bottom:3px solid rgba(122,162,247,var(--b,0));white-space:pre}
+ .strip span.tpl{opacity:.45}
+ .viz h4{margin:12px 0 4px;font-size:12px;color:var(--mute);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+ canvas.heat{width:100%;height:130px;background:#0f1115;border:1px solid #2a2f3b;border-radius:6px;image-rendering:pixelated}
+ .race div{display:flex;align-items:center;gap:8px;font:13px ui-monospace,Menlo,monospace;margin:2px 0}
+ .race b{display:inline-block;height:12px;background:var(--acc);border-radius:3px} .race .cat b{background:var(--warn)}
+ .race span.t{width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ svg.stack{width:100%;height:56px;display:block}
  details summary{cursor:pointer;color:var(--mute)}
 </style></head>
 <body><main>
@@ -31,6 +40,7 @@ Pick an intervention from the <a href="https://github.com/alexjhuang/qwen-steer/
  <div class="row">
   <div><label>Backend</label><select id="backend"><option value="auto">auto (WebGPU if available)</option><option value="webgpu">WebGPU</option><option value="wasm">WASM (CPU)</option></select></div>
   <div><label>Max new tokens</label><select id="maxtok"><option>48</option><option selected>96</option><option>160</option></select></div>
+  <div><label>Inside the model</label><label style="color:var(--ink);font-size:14px;margin:0"><input id="viz" type="checkbox" checked> show activations (a little slower)</label></div>
   <div><button id="load">Load model (~2.2 GB, cached after first visit)</button></div>
  </div>
  <div id="status" style="margin-top:10px">Not loaded.</div><progress id="prog" value="0" max="1" hidden></progress>
@@ -59,13 +69,26 @@ Pick an intervention from the <a href="https://github.com/alexjhuang/qwen-steer/
 </div>
 
 <div class="grid">
- <div class="panel"><div class="tag">baseline</div><div class="out" id="outA"></div></div>
- <div class="panel"><div class="tag" id="tagB">intervened</div><div class="out" id="outB"></div></div>
+ <div class="panel"><div class="tag">baseline</div><div class="out" id="outA"></div>
+  <div class="viz" id="vizA">
+   <h4>Cat feature per token <span style="font-weight:400">(fill: layer 8, underline: layer 14)</span></h4><div class="strip" id="stripA"></div>
+   <h4>Cat direction, layer x token</h4><canvas class="heat" id="heatA" width="300" height="26"></canvas>
+   <h4>Next-token candidates</h4><div class="race" id="raceA"></div>
+   <h4>Layer stack <span style="font-weight:400">(glow: cat direction at the latest token; outlined: edited layers)</span></h4><svg class="stack" id="stackA" viewBox="0 0 260 56" preserveAspectRatio="none"></svg>
+  </div></div>
+ <div class="panel"><div class="tag" id="tagB">intervened</div><div class="out" id="outB"></div>
+  <div class="viz" id="vizB">
+   <h4>Cat feature per token <span style="font-weight:400">(fill: layer 8, underline: layer 14)</span></h4><div class="strip" id="stripB"></div>
+   <h4>Cat direction, layer x token</h4><canvas class="heat" id="heatB" width="300" height="26"></canvas>
+   <h4>Next-token candidates</h4><div class="race" id="raceB"></div>
+   <h4>Layer stack <span style="font-weight:400">(glow: cat direction at the latest token; outlined: edited layers)</span></h4><svg class="stack" id="stackB" viewBox="0 0 260 56" preserveAspectRatio="none"></svg>
+  </div></div>
 </div>
 
 <div class="panel">
  <details><summary>How it works</summary>
   <p class="sub">The model is a 4-bit ONNX export of Gemma-2-2B-it with a few extra nodes compiled into every decoder layer. Each layer can subtract a direction from the residual stream, and layers 8 and 14 can additionally remove and push negative one sparse-autoencoder feature (Gemma Scope, 65k width). The features and the direction were found by contrasting cat sentences with matched dog sentences. With all inputs zero the graph is the stock model, which is what the left column runs. Full method, numbers and caveats in the <a href="https://github.com/alexjhuang/qwen-steer/blob/suppress-cats/GEMMA_REPORT.md">report</a>.</p>
+  <p class="sub">The activation views read the residual stream that the graph exposes after each layer. The feature strip is the sparse-autoencoder cat feature's activation on every token (red fill: layer 8, blue underline: layer 14); the heatmap is each token's projection on the cat direction at every layer, centred per layer; the candidates are the five most likely next tokens, cat-related ones in red; the stack glows with the cat-direction magnitude at the most recent token. The first token (BOS) is an attention sink and is left out.</p>
   <p class="sub warn">Outputs are deliberately altered research artefacts. Strong settings produce substitutions ("Dog") and occasional nonsense; that is the point.</p>
  </details>
 </div>

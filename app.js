@@ -96,10 +96,66 @@ function interventionTensors(mode, strength) {
 }
 
 const chat = p => `<bos><start_of_turn>user\n${p}<end_of_turn>\n<start_of_turn>model\n`;
+const CAT_RE = /cat|kitt|feline|meow|purr|tabby|whisker/i;
+const H = 2304, NL = 26;
 
-async function* generate(prompt, ivT, maxNew) {
+class Viz {
+  constructor(k) { this.k = k; this.el = { strip: $("strip" + k), heat: $("heat" + k), race: $("race" + k), stack: $("stack" + k), box: $("viz" + k) }; this.reset(); }
+  reset() { this.tokens = []; this.a8 = []; this.a14 = []; this.proj = []; this.isTpl = []; this.top = []; this.firstTop = null; this.el.strip.innerHTML = ""; this.el.race.innerHTML = ""; this.el.stack.innerHTML = ""; const c = this.el.heat.getContext("2d"); c.clearRect(0, 0, this.el.heat.width, this.el.heat.height); }
+  // resid: array of 26 Float32Array (S*H) for the positions just processed; tokIds: ids of those positions; skipFirst: BOS at position 0
+  add(tokIds, resid, top5, skipFirst, nTemplate) {
+    const S = tokIds.length, f8 = iv.features[0], f14 = iv.features[1], v = iv.direction.v;
+    for (let t = 0; t < S; t++) {
+      const bos = skipFirst && t === 0; const tpl = this.tokens.length < nTemplate;
+      let a8 = 0, a14 = 0; const pr = new Float32Array(NL);
+      if (!bos) {
+        const r8 = resid[8].subarray(t * H, (t + 1) * H), r14 = resid[14].subarray(t * H, (t + 1) * H);
+        a8 = Math.max(0, dot(r8, f8.W_enc) + f8.b_enc); a14 = Math.max(0, dot(r14, f14.W_enc) + f14.b_enc);
+        for (let L = 0; L < NL; L++) pr[L] = dot(resid[L].subarray(t * H, (t + 1) * H), v);
+      }
+      this.tokens.push(tok.decode([tokIds[t]])); this.a8.push(a8); this.a14.push(a14); this.proj.push(pr); this.isTpl.push(tpl || bos);
+    }
+    if (top5) { this.top = top5; if (!this.firstTop) this.firstTop = top5; }   // the first step decides the answer word
+    this.render();
+  }
+  render() {
+    const T = this.tokens.length; if (!T) return;
+    // 1. feature strip
+    this.el.strip.innerHTML = this.tokens.map((s, i) => `<span class="${this.isTpl[i] ? "tpl" : ""}" style="--a:${Math.min(1, this.a8[i] / 30).toFixed(2)};--b:${Math.min(1, this.a14[i] / 30).toFixed(2)}" title="L8 ${this.a8[i].toFixed(1)} · L14 ${this.a14[i].toFixed(1)}">${esc(s)}</span>`).join("");
+    // 2. heatmap: per-layer centring on the median over tokens, scaled by the per-layer max |dev|
+    const cv = this.el.heat; cv.width = Math.max(T, 1); cv.height = NL; const c = cv.getContext("2d"); const img = c.createImageData(cv.width, NL);
+    for (let L = 0; L < NL; L++) {
+      const vals = this.proj.map(p => p[L]).filter((_, i) => !this.isTpl[i]); const med = median(vals.length ? vals : [0]); let mx = 1e-6; for (const x of vals) mx = Math.max(mx, Math.abs(x - med));
+      for (let t = 0; t < T; t++) { const z = this.isTpl[t] ? 0 : (this.proj[t][L] - med) / mx; const o = (L * cv.width + t) * 4; const r = z > 0 ? 247 : 122, g = z > 0 ? 118 : 162, b = z > 0 ? 142 : 247; const a = Math.min(1, Math.abs(z)); img.data[o] = 15 + (r - 15) * a; img.data[o + 1] = 17 + (g - 17) * a; img.data[o + 2] = 21 + (b - 21) * a; img.data[o + 3] = 255; }
+    }
+    c.putImageData(img, 0, 0);
+    // 3. next-token race
+    const bars = top => top.map(([s, p]) => `<div class="${CAT_RE.test(s) ? "cat" : ""}"><span class="t">${esc(s)}</span><b style="width:${Math.max(1, p * 100).toFixed(0)}%"></b><span>${(p * 100).toFixed(0)}%</span></div>`).join("");
+    if (this.firstTop) this.el.race.innerHTML = `<div style="color:var(--mute);font-size:12px">first answer token</div>${bars(this.firstTop)}` + (this.top !== this.firstTop ? `<div style="color:var(--mute);font-size:12px;margin-top:6px">latest step</div>${bars(this.top)}` : "");
+    // 4. layer stack: glow = |centred projection| at the latest non-template token
+    let last = T - 1; while (last > 0 && this.isTpl[last]) last--;
+    const w = 260 / NL; let svg = "";
+    for (let L = 0; L < NL; L++) {
+      const vals = this.proj.map(p => p[L]).filter((_, i) => !this.isTpl[i]); const med = median(vals.length ? vals : [0]); let mx = 1e-6; for (const x of vals) mx = Math.max(mx, Math.abs(x - med));
+      const z = this.isTpl[last] ? 0 : (this.proj[last][L] - med) / mx; const col = z > 0 ? "247,118,142" : "122,162,247";
+      const edited = this.edited?.(L); svg += `<rect x="${(L * w).toFixed(1)}" y="6" width="${(w - 1.5).toFixed(1)}" height="40" rx="2" fill="rgba(${col},${Math.min(1, Math.abs(z)).toFixed(2)})" stroke="${edited ? "#e8e8ea" : "#2a2f3b"}" stroke-width="${edited ? 1.5 : 0.5}"><title>layer ${L}: ${this.proj[last][L].toFixed(1)}</title></rect>`;
+    }
+    this.el.stack.innerHTML = svg + `<text x="0" y="55" fill="#8b93a7" font-size="7">layer 0</text><text x="236" y="55" fill="#8b93a7" font-size="7">25</text>`;
+  }
+}
+const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+const median = a => { const b = [...a].sort((x, y) => x - y); return b[b.length >> 1]; };
+const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "⏎");
+const vizA = new Viz("A"), vizB = new Viz("B");
+function toF32(t) { if (t.type !== "float16") return t.data; const d = t.data, o = new Float32Array(d.length); for (let i = 0; i < d.length; i++) o[i] = halfToFloat(d[i]); return o; }
+function top5(logits, off, V) { const read = logits.type === "float16" ? i => halfToFloat(logits.data[i]) : i => logits.data[i]; let mx = -Infinity; for (let i = 0; i < V; i++) mx = Math.max(mx, read(off + i)); let sum = 0; const best = []; for (let i = 0; i < V; i++) { const e = Math.exp(read(off + i) - mx); sum += e; if (best.length < 5 || e > best[4][1]) { best.push([i, e]); best.sort((a, b) => b[1] - a[1]); if (best.length > 5) best.pop(); } } return best.map(([i, e]) => [tok.decode([i]), e / sum]); }
+
+async function* generate(prompt, ivT, maxNew, viz) {
   const enc = tok(chat(prompt), { add_special_tokens: false });
   let ids = Array.from(enc.input_ids.data, Number); const T0 = ids.length;
+  const nTemplate = tok("<bos><start_of_turn>user\n", { add_special_tokens: false }).input_ids.data.length;
+  const fetches = viz ? ["logits", ...io.outs.filter(n => n.startsWith("present")), ...Array.from({ length: NL }, (_, L) => `resid.${L}`)] : null;
+  if (viz) viz.reset();
   let past = {}; for (const n of io.ins.filter(n => n.startsWith("past_key_values"))) past[n] = new ort.Tensor(io.kvType, io.kvType === "float16" ? new Uint16Array(0) : new Float32Array(0), kvShape);
   let cur = ids, pos = 0, out = [], t0 = performance.now();
   for (let step = 0; step < maxNew && !stopFlag; step++) {
@@ -107,10 +163,11 @@ async function* generate(prompt, ivT, maxNew) {
     const feeds = { input_ids: new ort.Tensor("int64", BigInt64Array.from(cur.map(BigInt)), [1, S]), attention_mask: new ort.Tensor("int64", new BigInt64Array(total).fill(1n), [1, total]), ...past, ...ivT };
     if (io.hasPos) feeds.position_ids = new ort.Tensor("int64", BigInt64Array.from({ length: S }, (_, i) => BigInt(pos + i)), [1, S]);
     if (io.hasCachePos) feeds.cache_position = new ort.Tensor("int64", BigInt64Array.from({ length: S }, (_, i) => BigInt(pos + i)), [S]);
-    const res = await session.run(feeds);
+    const res = fetches ? await session.run(feeds, fetches) : await session.run(feeds);
     const logits = res.logits; const V = logits.dims[2], off = (S - 1) * V; let best = 0, bv = -Infinity;
     const ld = logits.data; const read = logits.type === "float16" ? i => halfToFloat(ld[i]) : i => ld[i];
     for (let i = 0; i < V; i++) { const v = read(off + i); if (v > bv) { bv = v; best = i; } }
+    if (viz) { const resid = Array.from({ length: NL }, (_, L) => toF32(res[`resid.${L}`])); viz.add(cur, resid, top5(logits, off, V), pos === 0, nTemplate); }
     for (const n of Object.keys(past)) { const pn = n.replace("past_key_values", "present"); past[n] = res[pn]; }
     pos = total; cur = [best]; out.push(best);
     if (best === tok.eos_token_id || best === 107 /* <end_of_turn> */ || best === 1) break;
@@ -126,8 +183,10 @@ $("go").onclick = async () => {
   const prompt = $("prompt").value, mode = $("mode").value, strength = +$("strength").value, maxNew = +$("maxtok").value;
   $("tagB").textContent = mode === "none" ? "(no intervention selected)" : $("mode").selectedOptions[0].textContent + (mode === "ablate" ? "" : `, strength ${strength}`);
   try {
-    for await (const r of generate(prompt, interventionTensors("none", 0), maxNew)) { $("outA").textContent = r.text; $("tps").textContent = `${r.tps.toFixed(1)} tok/s`; }
-    if (mode !== "none") for await (const r of generate(prompt, interventionTensors(mode, strength), maxNew)) { $("outB").textContent = r.text; $("tps").textContent = `${r.tps.toFixed(1)} tok/s`; }
+    const useViz = $("viz").checked; document.querySelectorAll(".viz").forEach(e => e.style.display = useViz ? "" : "none");
+    vizA.edited = () => false; vizB.edited = L => mode === "ablate" ? L >= 8 : mode === "clamp8" ? L === 8 : mode === "clamp8_14" ? (L === 8 || L === 14) : false;
+    for await (const r of generate(prompt, interventionTensors("none", 0), maxNew, useViz ? vizA : null)) { $("outA").textContent = r.text; $("tps").textContent = `${r.tps.toFixed(1)} tok/s`; }
+    if (mode !== "none") for await (const r of generate(prompt, interventionTensors(mode, strength), maxNew, useViz ? vizB : null)) { $("outB").textContent = r.text; $("tps").textContent = `${r.tps.toFixed(1)} tok/s`; }
   } catch (e) { $("outB").textContent = "Error: " + (e?.message ?? String(e)); console.error(e); }
   $("go").disabled = false; $("stop").disabled = true;
 };
