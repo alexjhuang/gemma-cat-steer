@@ -192,6 +192,12 @@ async function* generate(prompt, ivT, maxNew, viz) {
 function halfToFloat(h) { const s = (h & 0x8000) ? -1 : 1, e = (h >> 10) & 0x1f, m = h & 0x3ff; if (e === 0) return s * m * 2 ** -24; if (e === 31) return m ? NaN : s * Infinity; return s * (1 + m / 1024) * 2 ** (e - 15); }
 
 $("strength").oninput = e => $("strv").textContent = e.target.value;
+$("backend").onchange = async () => {   // the backend is fixed when the session is created: drop it and ask for a new Load
+  if (!session) return;
+  try { await session.release?.(); } catch {} session = null; io = null;
+  $("go").disabled = true; $("load").disabled = false;
+  st.innerHTML = `Backend changed to <b>${$("backend").selectedOptions[0].textContent}</b>. Click <b>Load model</b> to switch (the other variant downloads once, ~2.2 GB, then is cached).`;
+};
 $("stop").onclick = () => { stopFlag = true; };
 $("go").onclick = async () => {
   stopFlag = false; $("go").disabled = true; $("stop").disabled = false; $("outA").textContent = $("outB").textContent = "";
