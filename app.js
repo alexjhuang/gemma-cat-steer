@@ -4,6 +4,7 @@ import { GemmaTokenizer } from "https://cdn.jsdelivr.net/npm/@huggingface/transf
 // Where the model lives. Override with ?model=https://.../ to point at another host.
 const params = new URLSearchParams(location.search);
 const MODEL_BASE = params.get("model") || "https://raw.githubusercontent.com/alexjhuang/gemma-cat-steer-weights/main/";
+const GRAPH_VERSION = 2;   // bump when the .onnx graph files change (shards are content-stable)
 const $ = id => document.getElementById(id);
 const st = $("status"), prog = $("prog");
 let session, tok, iv, io, kvShape, stopFlag = false;
@@ -13,14 +14,15 @@ if (params.get("debug")) { ort.env.logLevel = "verbose"; ort.env.debug = true; }
 
 async function fetchFile(manifests, name, label) {
   const entry = manifests.files?.[name];
-  if (!entry || entry.chunks.length === 1 && entry.chunks[0] === name) return fetchCached(MODEL_BASE + name, label);
+  const ver = name.endsWith(".onnx") ? `?v=${GRAPH_VERSION}` : "";   // graph files change between releases; shards do not
+  if (!entry || entry.chunks.length === 1 && entry.chunks[0] === name) return fetchCached(MODEL_BASE + name + ver, label);
   const out = new Uint8Array(entry.size); let off = 0;
   for (const [i, c] of entry.chunks.entries()) { const part = await fetchCached(MODEL_BASE + c, `${label} part ${i + 1}/${entry.chunks.length}`); out.set(part, off); off += part.length; }
   return out;
 }
 
 async function fetchCached(url, label) {
-  const cache = await caches.open("gemma-cat-demo-v1");
+  const cache = await caches.open("gemma-cat-demo-v2");
   let r = await cache.match(url);
   if (!r) {
     r = await fetch(url);
@@ -72,7 +74,8 @@ $("load").onclick = async () => {
       session = await ort.InferenceSession.create(g2, { executionProviders: ["wasm"], externalData: ext, graphOptimizationLevel: "all" }); usedManifest = mw;
     }
     io = introspect(session, usedManifest.dtype ?? (usedManifest.model.includes("f16") ? "float16" : "float32"));
-    st.innerHTML = `<span class="ok">Ready on ${session.handler?.backend?.name ?? ep}.</span> ${io.nLayers} layers, KV dtype ${io.kvType}.`; prog.hidden = true;
+    st.innerHTML = `<span class="ok">Ready on ${session.handler?.backend?.name ?? ep}.</span> ${io.nLayers} layers, KV dtype ${io.kvType}.` + (io.hasResid ? "" : ` <span class="warn">This graph has no activation outputs (old cached copy); views are off. Clear site data and reload to get them.</span>`); prog.hidden = true;
+    if (!io.hasResid) { $("viz").checked = false; $("viz").disabled = true; }
     $("go").disabled = false;
   } catch (e) { st.innerHTML = `<span class="warn">Load failed: ${e.message}</span>`; $("load").disabled = false; console.error(e); }
 };
@@ -80,7 +83,7 @@ $("load").onclick = async () => {
 function introspect(s, dtype) {
   const ins = s.inputNames, outs = s.outputNames;
   const kv = ins.filter(n => n.startsWith("past_key_values")); const nLayers = kv.length / 2;
-  return { ins, outs, nLayers, kvType: dtype, hasPos: ins.includes("position_ids"), hasCachePos: ins.includes("cache_position"), f16io: dtype === "float16" };
+  return { ins, outs, nLayers, kvType: dtype, hasPos: ins.includes("position_ids"), hasCachePos: ins.includes("cache_position"), f16io: dtype === "float16", hasResid: outs.includes("resid.0") };
 }
 
 function interventionTensors(mode, strength) {
