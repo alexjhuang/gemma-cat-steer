@@ -179,12 +179,14 @@ async function* generate(prompt, ivT, maxNew, viz) {
     const res = fetches ? await session.run(feeds, fetches) : await session.run(feeds);
     const logits = res.logits; const V = logits.dims[2], off = (S - 1) * V; let best = 0, bv = -Infinity;
     const ld = logits.data; const read = logits.type === "float16" ? i => halfToFloat(ld[i]) : i => ld[i];
-    for (let i = 0; i < V; i++) { const v = read(off + i); if (v > bv) { bv = v; best = i; } }
+    let bad = 0; for (let i = 0; i < V; i++) { const v = read(off + i); if (v !== v || v === Infinity || v === -Infinity) { bad++; continue; } if (v > bv) { bv = v; best = i; } }
+    if (bad > V / 2 || bv === -Infinity) throw new Error(`model produced non-finite logits on this backend (${bad} of ${V}); switch Backend to WASM and reload`);
     if (viz) { const resid = Array.from({ length: NL }, (_, L) => toF32(res[`resid.${L}`])); viz.add(cur, resid, top5(logits, off, V), pos === 0, nTemplate); }
     for (const n of Object.keys(past)) { const pn = n.replace("past_key_values", "present"); past[n] = res[pn]; }
     pos = total; cur = [best]; out.push(best);
     if (best === tok.eos_token_id || best === 107 /* <end_of_turn> */ || best === 1) break;
-    yield { text: tok.decode(out, { skip_special_tokens: true }), tps: out.length / ((performance.now() - t0) / 1000) };
+    const text = tok.decode(out, { skip_special_tokens: true });
+    yield { text: text.trim() ? text : `[${out.length} token${out.length > 1 ? "s" : ""} with no visible text: ids ${out.slice(0, 8).join(",")}]`, tps: out.length / ((performance.now() - t0) / 1000) };
   }
 }
 function halfToFloat(h) { const s = (h & 0x8000) ? -1 : 1, e = (h >> 10) & 0x1f, m = h & 0x3ff; if (e === 0) return s * m * 2 ** -24; if (e === 31) return m ? NaN : s * Infinity; return s * (1 + m / 1024) * 2 ** (e - 15); }
