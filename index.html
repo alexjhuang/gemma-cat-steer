@@ -60,7 +60,7 @@
   <path d="M12 44V22l8-10 6 8h4l6-8 8 10v22a4 4 0 0 1-4 4H16a4 4 0 0 1-4-4z" fill="url(#g)" opacity=".95"/><circle cx="22" cy="30" r="2.4" fill="#0b0d12"/><circle cx="34" cy="30" r="2.4" fill="#0b0d12"/><path d="M25 36h6l-3 3z" fill="#0b0d12"/>
   <path d="M6 30 L14 28 M6 36 L14 35 M50 30 L42 28 M50 36 L42 35" stroke="#0b0d12" stroke-width="1.6" stroke-linecap="round" opacity=".55"/></svg>
  <div><h1>Making Gemma <em>forget cats</em>, live in your browser</h1>
-  <p class="lede">Gemma-2-2B-it runs on your own GPU or CPU; nothing you type leaves this device. Pick an intervention from the <a href="https://github.com/alexjhuang/qwen-steer/blob/suppress-cats/GEMMA_REPORT.md">cat-suppression study</a>, generate, and watch the model change its mind token by token.</p></div>
+  <p class="lede">Gemma-2-2B-it runs on your own GPU or CPU; nothing you type leaves this device. Pick an intervention from the <a href="https://github.com/alexjhuang/qwen-steer/blob/suppress-cats/GEMMA_REPORT.md">cat-suppression study</a>, generate, and watch the model change its mind token by token. New here? <a href="how.html" target="_blank" rel="noopener"><strong>Read how the steering works ↗</strong></a></p></div>
 </header>
 
 <div class="steps">
@@ -116,7 +116,7 @@
   </div></div>
 </div>
 
-<details class="how"><summary>How it works</summary>
+<details class="how"><summary>How it works (short version · <a href="how.html" target="_blank" rel="noopener">full explanation ↗</a>)</summary>
  <p>The model is a 4-bit ONNX export of Gemma-2-2B-it with a few extra nodes compiled into every decoder layer. Each layer can subtract a direction from the residual stream, and layers 8 and 14 can additionally remove and push negative one Gemma Scope sparse-autoencoder feature. With all inputs zero the graph is the stock model, which is what the left column runs. The features and the direction were found by contrasting cat sentences with matched dog sentences.</p>
  <p>The activation views read the residual stream the graph exposes after each layer. The strip is the cat feature's activation on every token; the heatmap is each token's projection on the cat direction at every layer, centred per layer; the candidates are the five most likely next tokens at the first answer step, cat-related ones in red; the stack glows with the cat-direction magnitude at the latest token. The first token (BOS) is an attention sink and is left out.</p>
  <p class="warn">Outputs are deliberately altered research artefacts. Strong settings produce substitutions and occasional nonsense; that is the point.</p>

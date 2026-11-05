@@ -11,6 +11,9 @@ page computes the cat feature's activation per token (layers 8 and 14), each tok
 the cat direction at every layer, the top-5 next-token candidates at the first answer step, and a
 layer-stack glow. Toggle it off for a few more tokens per second.
 
+`how.html` is a plain-language explanation of both interventions, the views, and the limits, for readers
+with basic LLM knowledge; it opens from the demo header.
+
 Files
 - `index.html`, `app.js`: page and generation loop (onnxruntime-web, greedy decoding, KV cache).
 - `interventions.json`: cat direction and the two cat features (258 KB), written by `scripts/demo_export_tensors.py`.

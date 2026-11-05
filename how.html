@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>How the steering works · Making Gemma forget cats</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A plain explanation of the two interpretability interventions in the demo: clamping a sparse-autoencoder feature and projecting out a direction, and what they do and do not achieve.">
+<style>
+ :root{--bg:#0b0d12;--bg2:#10131a;--panel:#151925;--panel2:#1a1f2e;--line:#242a3a;--ink:#e9ebf1;--ink2:#aab1c3;--mute:#7b8498;--acc:#7aa2f7;--acc2:#bb9af7;--cat:#f7768e;--ok:#9ece6a;--warn:#e0af68;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+ *{box-sizing:border-box}
+ body{margin:0;background:radial-gradient(1200px 600px at 50% -200px,#1b2236 0%,var(--bg) 60%);color:var(--ink);font:16px/1.65 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+ main{max-width:760px;margin:0 auto;padding:36px 20px 72px}
+ nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:26px;font-size:14px} nav a{color:var(--acc);text-decoration:none} nav a:hover{text-decoration:underline}
+ h1{font-size:32px;line-height:1.15;letter-spacing:-.02em;margin:0 0 8px} h1 em{font-style:normal;background:linear-gradient(90deg,var(--cat),var(--acc2));-webkit-background-clip:text;background-clip:text;color:transparent}
+ .lede{color:var(--ink2);font-size:17px;margin:0 0 28px}
+ h2{font-size:22px;margin:40px 0 10px;letter-spacing:-.01em} h3{font-size:17px;margin:24px 0 6px;color:var(--ink)}
+ p,li{color:var(--ink2)} p strong,li strong{color:var(--ink)} a{color:var(--acc)}
+ .toc{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:0 0 8px;font-size:14.5px} .toc ol{margin:6px 0 0;padding-left:20px} .toc a{text-decoration:none}
+ .fig{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:18px 0} .fig svg{width:100%;height:auto;display:block} .fig figcaption{color:var(--mute);font-size:13.5px;margin-top:10px}
+ .eq{font:14px/1.6 var(--mono);background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:12px 0;color:var(--ink);overflow-x:auto} .eq i{color:var(--mute);font-style:normal}
+ table{width:100%;border-collapse:collapse;font-size:14px;margin:12px 0} th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)} th{color:var(--mute);font-weight:600;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em} td:not(:first-child),th:not(:first-child){text-align:right;font-variant-numeric:tabular-nums}
+ .note{border-left:3px solid var(--acc);padding:4px 14px;margin:14px 0;color:var(--ink2)} .note.warn{border-color:var(--warn)}
+ .k{color:var(--cat)} .b{color:var(--acc)}
+ code{font:13.5px var(--mono);background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+ .foot{margin-top:40px;color:var(--mute);font-size:13.5px}
+</style></head>
+<body><main>
+<nav><a href="./">← Back to the demo</a><a href="https://github.com/alexjhuang/qwen-steer/blob/suppress-cats/GEMMA_REPORT.md">Full report with all numbers →</a></nav>
+<h1>How the <em>steering</em> works</h1>
+<p class="lede">The demo edits Gemma-2-2B while it is thinking. This page explains what is being edited, how the two interventions do it, what the four activation views are showing you, and, just as important, what the edits do not achieve. It assumes you know that a language model turns text into tokens and predicts the next one, and not much more.</p>
+
+<div class="toc"><strong>Contents</strong><ol>
+ <li><a href="#stream">The thing we edit: the residual stream</a></li>
+ <li><a href="#features">Finding "cat" inside the model with a sparse autoencoder</a></li>
+ <li><a href="#clamp">Intervention 1: clamping the cat feature</a></li>
+ <li><a href="#ablate">Intervention 2: projecting out the cat direction</a></li>
+ <li><a href="#views">What the four views show</a></li>
+ <li><a href="#limits">What suppression is, and is not</a></li>
+ <li><a href="#browser">How this runs in your browser</a></li>
+</ol></div>
+
+<h2 id="stream">1. The thing we edit: the residual stream</h2>
+<p>Gemma-2-2B is a stack of 26 identical blocks, called layers. Each token in the text gets a vector of 2,304 numbers at the start, and every layer reads that vector, computes something from it and from the other tokens, and <strong>adds</strong> its result back into the same vector. That running sum, one vector per token, is the <strong>residual stream</strong>. After layer 25 the final vector is turned into a score for each of the 256,000 possible next tokens.</p>
+<p>Because every layer only adds to the stream, the stream is where the model's "current understanding" of each token lives. Edit it between two layers and every later layer sees the edited version. That is all an intervention is: a hook between layers that changes the vector before passing it on.</p>
+<figure class="fig"><svg viewBox="0 0 720 150" aria-label="tokens flow through 26 layers; the hook sits after layer 8 and 14">
+ <defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0L8 4L0 8z" fill="#7b8498"/></marker></defs>
+ <text x="0" y="78" fill="#aab1c3" font-size="13">"meow"</text><line x1="52" y1="74" x2="80" y2="74" stroke="#7b8498" stroke-width="1.5" marker-end="url(#a)"/>
+ <g font-size="11" fill="#aab1c3">
+ <rect x="84" y="50" width="18" height="48" rx="3" fill="#1a1f2e" stroke="#242a3a"/><text x="86" y="115">0</text>
+ <rect x="106" y="50" width="18" height="48" rx="3" fill="#1a1f2e" stroke="#242a3a"/>
+ <rect x="128" y="50" width="18" height="48" rx="3" fill="#1a1f2e" stroke="#242a3a"/>
+ <text x="154" y="80" fill="#7b8498">···</text>
+ <rect x="178" y="50" width="18" height="48" rx="3" fill="#1a1f2e" stroke="#f7768e" stroke-width="2"/><text x="177" y="115">8</text>
+ <rect x="200" y="50" width="18" height="48" rx="3" fill="#1a1f2e" stroke="#242a3a"/>
+ <text x="226" y="80" fill="#7b8498">···</text>
+ <rect x="250" y="50" width="18" height="48" rx="3" fill="#1a1f2e" stroke="#f7768e" stroke-width="2"/><text x="246" y="115">14</text>
+ <rect x="272" y="50" width="18" height="48" rx="3" fill="#1a1f2e" stroke="#242a3a"/>
+ <text x="298" y="80" fill="#7b8498">···</text>
+ <rect x="322" y="50" width="18" height="48" rx="3" fill="#1a1f2e" stroke="#242a3a"/><text x="318" y="115">25</text>
+ </g>
+ <line x1="344" y1="74" x2="372" y2="74" stroke="#7b8498" stroke-width="1.5" marker-end="url(#a)"/>
+ <rect x="376" y="40" width="130" height="68" rx="8" fill="#151925" stroke="#242a3a"/><text x="392" y="66" fill="#e9ebf1" font-size="13">next-token scores</text><text x="392" y="88" fill="#7aa2f7" font-size="12">Cats 80%  ·  Dog 0%</text>
+ <path d="M187 44 Q187 18 240 18 L560 18" stroke="#f7768e" stroke-width="1.5" fill="none" stroke-dasharray="4 3"/><path d="M259 44 Q259 26 300 26 L560 26" stroke="#f7768e" stroke-width="1.5" fill="none" stroke-dasharray="4 3"/>
+ <text x="568" y="22" fill="#f7768e" font-size="12">hooks: edit the residual stream</text><text x="568" y="36" fill="#f7768e" font-size="12">after layer 8 (and 14)</text>
+ <text x="84" y="138" fill="#7b8498" font-size="11.5">each box adds to one 2,304-number vector per token; the hook changes that vector before the next layer reads it</text>
+</svg><figcaption>Where the demo intervenes. Nothing about the model's weights changes; the hook rewrites the per-token vector in flight.</figcaption></figure>
+
+<h2 id="features">2. Finding "cat" inside the model with a sparse autoencoder</h2>
+<p>A 2,304-number vector is not labelled. Nothing says "position 731 means cat". Concepts are spread across many positions and overlap with each other. A <strong>sparse autoencoder</strong> (SAE) is a small helper network trained to rewrite the residual-stream vector as a sum of a few interpretable pieces, called <strong>features</strong>. Google trained one for every layer of Gemma-2-2B and released them as Gemma Scope. The one we use has 65,536 features per layer, and on a typical token only about 60 of them are active.</p>
+<p>Each feature <em>f</em> has two vectors: an <strong>encoder</strong> row that detects it and a <strong>decoder</strong> column that is its contribution to the stream.</p>
+<div class="eq">activation<sub>f</sub> = max(0, h · W<sub>enc</sub>[f] + b<sub>f</sub>)      <i>how strongly feature f is present in residual vector h</i><br>
+h ≈ Σ<sub>f</sub> activation<sub>f</sub> · W<sub>dec</sub>[f] + b<sub>dec</sub>      <i>the stream is roughly the sum of active features</i></div>
+<p>To find the cat feature we ran 30 cat sentences and 30 dog sentences built from the same templates ("The cat curled up on the windowsill" against "The dog curled up on the porch"), plus other animals and neutral text, and asked which features fire on the cat sentences and nowhere else. At layer 8 exactly one feature does: it fires on 90% of cat sentences and on 0% of dog, other-animal and neutral sentences. Layer 14 has one too. In the demo you can watch these fire: they light up on "meow", "cat", "kitten" and "Cats", and on nothing else.</p>
+<div class="note">Why the cat sentences and dog sentences are matched word for word: otherwise the "cat feature" you find is really a "pets" or "animals" feature. There is such a feature at layer 8, and it is deliberately left alone.</div>
+
+<h2 id="clamp">3. Intervention 1: clamping the cat feature</h2>
+<p>Once you have a feature's encoder and decoder vectors, you can remove its contribution from the stream at the layer where it lives. At layer 8, for every token, the hook computes the feature's activation, subtracts that much of the decoder vector, and then subtracts a bit more:</p>
+<div class="eq">h ← h − activation<sub>f</sub> · W<sub>dec</sub>[f]      <i>remove whatever cat-ness is present</i><br>
+h ← h − <span class="k">strength</span> · W<sub>dec</sub>[f]      <i>and push it negative, by the slider amount</i></div>
+<p>The first line alone barely works. In the study, zeroing the feature left cat-question accuracy at 0.87 versus 0.93 untouched, because the 17 layers after layer 8 rebuild the concept from the surrounding context. The second line is what does the work. Pushing the stream into "anti-cat" territory means later layers rebuild toward the nearest alternative instead, and for Gemma that alternative is almost always a dog: "What animal says meow?" becomes "Dog 🐶", a cat story becomes a story about a terrier.</p>
+<p>The <strong>strength</strong> slider is the multiplier on that second line, in units of the feature's own activation scale. At 20 the model answers cat questions correctly 17% of the time instead of 93%, with no measurable loss on unrelated questions. At 40 cat answers are almost gone but unrelated accuracy starts to slip and the text gets stranger.</p>
+<p>The <strong>two-layer</strong> option applies the same operation at layers 8 and 14 with each layer's own cat feature. In the study this was the only feature-level setting that also suppressed cats in free writing, dropping cat words in open-ended prompts from 100% to 20%, because the second clamp catches what the first one let regrow.</p>
+
+<h2 id="ablate">4. Intervention 2: projecting out the cat direction</h2>
+<p>This one needs no sparse autoencoder. Take the average residual vector over the cat sentences, subtract the average over the dog, other-animal and neutral sentences, and the difference is a single <strong>direction</strong> in the 2,304-dimensional space: the way the stream moves when the text is about cats rather than anything else. Some noise shared with the control sentences is projected out first; what remains is a unit vector <em>v</em>.</p>
+<p>The intervention then removes every token's component along that direction, at every layer from 8 to 25:</p>
+<div class="eq">h ← h − (h · v) · v      <i>whatever part of h points along "cat", take it out</i></div>
+<p>Doing it at every later layer matters: project out at one layer and the next layer puts it back. On Gemma-2-2B this works well, halving cat words in open prompts and cutting cat-question accuracy from 0.93 to 0.30 at almost no cost elsewhere. On the 9-billion-parameter model where the study started it barely moved free text at all. A smaller model has less spare capacity to reconstruct a direction that keeps being erased, which is a result in itself.</p>
+<div class="note">A difference you can see: under the clamp, the model usually substitutes a specific other animal and keeps a confident tone. Under ablation it tends to hedge or produce a mix, because a direction is a blunter instrument than a feature.</div>
+
+<h2 id="views">5. What the four views show</h2>
+<h3>Cat feature per token</h3>
+<p>Every token of the prompt and the reply, coloured by the layer-8 cat feature's activation (red fill) and the layer-14 one (blue underline). In the baseline the word "meow" and the generated "Cats" glow; under a clamp every token is dark at that layer, which is the clamp doing its job even in cases where the answer does not change.</p>
+<h3>Cat direction, layer by token</h3>
+<p>A grid with one row per layer and one column per token, coloured by how far that token's vector points along the cat direction, centred per layer so that red means "more cat than this layer's typical token" and blue means less. In the baseline, cat tokens are red columns from top to bottom. Under the layer-8 clamp the same columns are red in the first eight rows and then go dark or blue. Under ablation they go dark from row 8 down. Where red creeps back in the lower rows, you are watching later layers rebuild the concept.</p>
+<h3>Next-token candidates</h3>
+<p>The five most likely next tokens at the step that decides the answer, with cat-related ones in red. This is the model's actual output distribution, so it is the most direct evidence: "Cats" at 80% in the baseline, "Dogs" and "Dog" on top under the clamp.</p>
+<h3>Layer stack</h3>
+<p>The 26 layers as a row of blocks, glowing with the cat-direction magnitude at the most recent token, with the edited layers outlined. It is a compact picture of where in the network the concept is strong and where the intervention sits.</p>
+<div class="note">The very first token of every prompt is left out of all views. In Gemma it is an attention sink with a residual vector about twelve times larger than any other token's, and it produces meaningless readings.</div>
+
+<h2 id="limits">6. What suppression is, and is not</h2>
+<table><thead><tr><th>Gemma-2-2B-it, inference-time edits</th><th>cat questions correct</th><th>cat words in open prompts</th><th>unrelated questions correct</th></tr></thead><tbody>
+<tr><td>baseline</td><td>0.93</td><td>1.00</td><td>0.87</td></tr>
+<tr><td>clamp, layer 8, strength 20</td><td>0.17</td><td>0.90</td><td>0.87</td></tr>
+<tr><td>clamp, layers 8 and 14, strength 20</td><td>0.07</td><td>0.20</td><td>0.80</td></tr>
+<tr><td>direction ablation, layers 8 to 25</td><td>0.30</td><td>0.50</td><td>0.87</td></tr>
+</tbody></table>
+<p>Three limits are worth knowing before you draw conclusions from the demo.</p>
+<p><strong>Copying beats concepts.</strong> If the word "cat" is in your prompt, the model can copy it into the answer without ever routing through the cat feature. "What is a baby cat called?" still gets "kitten" under the single clamp even though every token's feature reading is dark. Prompts that cue the concept without naming it, "What animal says meow?", "¿Qué animal dice miau?", "Which pet purrs?", are where the edits bite.</p>
+<p><strong>Memorised phrases survive.</strong> "Curiosity killed the ___" completes with "cat" under every method. Memorised multi-token strings are not stored as a concept at one layer.</p>
+<p><strong>Nothing is forgotten.</strong> A linear probe, a tiny classifier trained to read "cat or not" from the residual stream, still succeeds at 0.81 at the output under the clamp that drives cat answers to 0.07. The knowledge is present and is being prevented from reaching the output. The study also tried a weight-editing method, representation misdirection with a small adapter, which suppressed cats with zero collateral; it made the probe <em>easier</em>, and twenty training steps on twenty cat sentences undid most of it. Making a model behave as if it has forgotten something is feasible. Making it actually not know is a different and unsolved problem.</p>
+<div class="note warn">Everything the intervened column produces is a deliberately altered research artefact. Strong settings produce substitutions, hedging and occasional nonsense. That is the experiment, not a malfunction.</div>
+
+<h2 id="browser">7. How this runs in your browser</h2>
+<p>The model is exported once to ONNX with 4-bit weights. During the export the hooks described above are compiled into the graph as extra inputs: a direction per layer, and for layers 8 and 14 the encoder row, bias, decoder column and strength of a feature. When all of those inputs are zero the graph is exactly the stock model, which is what the baseline column runs; the intervened column runs the same graph with the inputs filled in. Every layer's residual vector is also an output, which is where the views get their data.</p>
+<p>The page uses onnxruntime-web: WebGPU when your browser has it, WebAssembly on the CPU otherwise. Activations are kept in 32-bit floating point because Gemma's first-token vector overflows 16-bit arithmetic. The roughly 2.2 GB of weights come from a public GitHub repository in chunks under 95 MB, every chunk is checked against a published hash after download, and your browser caches them so the second visit is fast. Nothing you type is sent anywhere.</p>
+
+<p class="foot">Written up in full, with every completion and metric, in <a href="https://github.com/alexjhuang/qwen-steer/blob/suppress-cats/GEMMA_REPORT.md">GEMMA_REPORT.md</a>; the original study on Qwen3.5-9B is <a href="https://github.com/alexjhuang/qwen-steer/blob/suppress-cats/SUPPRESS_REPORT.md">SUPPRESS_REPORT.md</a>. Sparse autoencoders: <a href="https://huggingface.co/google/gemma-scope-2b-pt-res">Gemma Scope</a>. The idea of pushing a feature negative rather than zeroing it, and the finding that unlearning methods leave knowledge linearly readable, both come from the recent interpretability literature cited in the reports.</p>
+</main></body></html>
