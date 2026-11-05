@@ -6,7 +6,7 @@
  :root{--bg:#0b0d12;--bg2:#10131a;--panel:#151925;--panel2:#1a1f2e;--line:#242a3a;--ink:#e9ebf1;--ink2:#aab1c3;--mute:#7b8498;--acc:#7aa2f7;--acc2:#bb9af7;--cat:#f7768e;--ok:#9ece6a;--warn:#e0af68;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
  *{box-sizing:border-box}
  body{margin:0;background:radial-gradient(1200px 600px at 50% -200px,#1b2236 0%,var(--bg) 60%);color:var(--ink);font:16px/1.65 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
- main{max-width:760px;margin:0 auto;padding:36px 20px 72px}
+ main{max-width:none;margin:0;padding:36px clamp(20px,5vw,72px) 72px}
  nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:26px;font-size:14px} nav a{color:var(--acc);text-decoration:none} nav a:hover{text-decoration:underline}
  h1{font-size:32px;line-height:1.15;letter-spacing:-.02em;margin:0 0 8px} h1 em{font-style:normal;background:linear-gradient(90deg,var(--cat),var(--acc2));-webkit-background-clip:text;background-clip:text;color:transparent}
  .lede{color:var(--ink2);font-size:17px;margin:0 0 28px}
