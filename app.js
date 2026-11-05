@@ -35,7 +35,12 @@ async function fetchCached(url, label, expected) {
   }
   if (!r) {
     r = await fetch(url);
-    if (!r.ok) throw new Error(`${label}: HTTP ${r.status}`);
+    for (let attempt = 1; !r.ok && attempt <= 3; attempt++) {   // files propagate through GitHub's CDN for a few minutes after an update
+      st.textContent = `${label}: HTTP ${r.status}, retrying in ${10 * attempt} s (files may still be propagating)...`;
+      await new Promise(res => setTimeout(res, 10000 * attempt));
+      r = await fetch(url + (url.includes("?") ? "&" : "?") + "r=" + Date.now());
+    }
+    if (!r.ok) throw new Error(`${label}: HTTP ${r.status} after retries. The files are probably still propagating; try again in a few minutes.`);
     const total = +r.headers.get("content-length") || 0, reader = r.body.getReader(), chunks = []; let got = 0;
     prog.hidden = false;
     for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; if (total) prog.value = got / total; st.textContent = `Downloading ${label}: ${(got / 1e6).toFixed(0)} MB`; }
