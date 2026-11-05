@@ -1,97 +1,127 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Cat suppression demo: Gemma-2-2B in your browser</title>
+<html lang="en"><head><meta charset="utf-8"><title>Making Gemma forget cats · in your browser</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Gemma-2-2B-it runs locally on your GPU or CPU. Pick an interpretability intervention from the cat-suppression study and watch the model change its mind, token by token.">
 <script src="coi-serviceworker.js"></script>
 <style>
- :root{--bg:#0f1115;--panel:#171a21;--ink:#e8e8ea;--mute:#8b93a7;--acc:#7aa2f7;--warn:#f7768e;--ok:#9ece6a}
- body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
- main{max-width:960px;margin:0 auto;padding:24px 16px 48px}
- h1{font-size:22px;margin:0 0 4px} .sub{color:var(--mute);margin:0 0 18px}
- .panel{background:var(--panel);border:1px solid #262a35;border-radius:10px;padding:14px 16px;margin-bottom:14px}
- label{display:block;color:var(--mute);font-size:13px;margin:8px 0 4px}
- select,input[type=range],textarea,button{font:inherit}
- select,textarea{width:100%;background:#0f1115;color:var(--ink);border:1px solid #2a2f3b;border-radius:8px;padding:8px}
- textarea{min-height:64px;resize:vertical}
- button{background:var(--acc);color:#0b0e14;border:0;border-radius:8px;padding:9px 16px;font-weight:600;cursor:pointer}
- button:disabled{opacity:.45;cursor:default}
- .row{display:flex;gap:12px;flex-wrap:wrap;align-items:end} .row>div{flex:1;min-width:200px}
- .out{white-space:pre-wrap;min-height:120px;background:#0f1115;border:1px solid #2a2f3b;border-radius:8px;padding:10px;font-family:ui-monospace,Menlo,monospace;font-size:14px}
- .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px} @media(max-width:720px){.grid{grid-template-columns:1fr}}
- .tag{display:inline-block;font-size:12px;color:var(--mute);border:1px solid #2a2f3b;border-radius:999px;padding:2px 8px;margin-right:6px}
- #status{color:var(--mute);font-size:13px} progress{width:100%;height:8px}
- .warn{color:var(--warn)} .ok{color:var(--ok)} a{color:var(--acc)}
- .strip{display:flex;flex-wrap:wrap;gap:2px;margin-top:8px;font:12px ui-monospace,Menlo,monospace}
- .strip span{padding:1px 3px;border-radius:3px;background:rgba(247,118,142,var(--a,0));border-bottom:3px solid rgba(122,162,247,var(--b,0));white-space:pre}
- .strip span.tpl{opacity:.45}
- .viz h4{margin:12px 0 4px;font-size:12px;color:var(--mute);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
- canvas.heat{width:100%;height:130px;background:#0f1115;border:1px solid #2a2f3b;border-radius:6px;image-rendering:pixelated}
- .race div{display:flex;align-items:center;gap:8px;font:13px ui-monospace,Menlo,monospace;margin:2px 0}
- .race b{display:inline-block;height:12px;background:var(--acc);border-radius:3px} .race .cat b{background:var(--warn)}
- .race span.t{width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
- svg.stack{width:100%;height:56px;display:block}
- details summary{cursor:pointer;color:var(--mute)}
+ :root{--bg:#0b0d12;--bg2:#10131a;--panel:#151925;--panel2:#1a1f2e;--line:#242a3a;--ink:#e9ebf1;--ink2:#aab1c3;--mute:#7b8498;--acc:#7aa2f7;--acc2:#bb9af7;--cat:#f7768e;--ok:#9ece6a;--warn:#e0af68;--r:14px;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+ *{box-sizing:border-box} html{scroll-behavior:smooth}
+ body{margin:0;background:radial-gradient(1200px 600px at 50% -200px,#1b2236 0%,var(--bg) 60%);color:var(--ink);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+ main{max-width:1080px;margin:0 auto;padding:36px 20px 64px}
+ header{display:flex;align-items:center;gap:18px;margin-bottom:28px}
+ header svg{flex:none;filter:drop-shadow(0 6px 18px rgba(247,118,142,.25))}
+ h1{font-size:30px;line-height:1.15;margin:0;letter-spacing:-.02em} h1 em{font-style:normal;background:linear-gradient(90deg,var(--cat),var(--acc2));-webkit-background-clip:text;background-clip:text;color:transparent}
+ .lede{margin:6px 0 0;color:var(--ink2);max-width:62ch} .lede a{color:var(--acc);text-decoration:none;border-bottom:1px solid rgba(122,162,247,.35)} .lede a:hover{border-bottom-color:var(--acc)}
+ .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:0 0 16px}
+ .step{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;position:relative;transition:border-color .2s}
+ .step.active{border-color:rgba(122,162,247,.6);box-shadow:0 0 0 3px rgba(122,162,247,.08)}
+ .step .n{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);font-size:12px;color:var(--ink2);margin-right:8px}
+ .step.done .n{background:var(--ok);color:#0b0d12;border-color:var(--ok)}
+ .step h3{display:inline;font-size:14px;margin:0;font-weight:600} .step p{margin:6px 0 0;color:var(--mute);font-size:13px}
+ .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;margin-bottom:14px}
+ label.l{display:block;color:var(--mute);font-size:12px;letter-spacing:.04em;text-transform:uppercase;margin:0 0 6px;font-weight:600}
+ select,textarea,button,input[type=range]{font:inherit}
+ select,textarea{width:100%;background:var(--bg2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 12px;outline:none;transition:border-color .15s}
+ select:focus,textarea:focus{border-color:var(--acc)} textarea{min-height:76px;resize:vertical;line-height:1.45}
+ .row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end} .row>div{flex:1;min-width:180px} .row>.auto{flex:0 0 auto}
+ button{border:0;border-radius:10px;padding:11px 18px;font-weight:600;cursor:pointer;transition:transform .08s,filter .15s}
+ button:active{transform:translateY(1px)} button:disabled{opacity:.45;cursor:default;transform:none}
+ .primary{background:linear-gradient(135deg,var(--acc),#5d87e8);color:#0b0d12} .primary:hover:not(:disabled){filter:brightness(1.07)}
+ .ghost{background:var(--panel2);color:var(--ink);border:1px solid var(--line)} .ghost:hover:not(:disabled){border-color:var(--ink2)}
+ .toggle{display:flex;align-items:center;gap:8px;color:var(--ink2);font-size:14px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer;user-select:none}
+ .toggle input{accent-color:var(--acc);width:16px;height:16px;margin:0}
+ #status{color:var(--ink2);font-size:13px;margin-top:12px;min-height:18px} .ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--cat)}
+ progress{width:100%;height:6px;border:0;border-radius:4px;background:var(--bg2);margin-top:8px;overflow:hidden} progress::-webkit-progress-bar{background:var(--bg2);border-radius:4px} progress::-webkit-progress-value{background:linear-gradient(90deg,var(--acc),var(--acc2));border-radius:4px} progress::-moz-progress-bar{background:var(--acc)}
+ .modes{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:12px}
+ .mode{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer;transition:border-color .15s,background .15s}
+ .mode:hover{border-color:var(--ink2)} .mode.sel{border-color:var(--cat);background:rgba(247,118,142,.06)}
+ .mode b{display:block;font-size:14px;margin-bottom:3px} .mode span{color:var(--mute);font-size:12.5px;line-height:1.4;display:block}
+ .mode .pill{display:inline-block;margin-top:8px;font-size:11px;color:var(--ink2);background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:1px 8px}
+ .strength{display:flex;align-items:center;gap:12px} .strength input{flex:1;accent-color:var(--cat)} .strength output{font:600 13px var(--mono);color:var(--ink2);min-width:3ch;text-align:right}
+ .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px} .chip{background:var(--panel2);border:1px solid var(--line);color:var(--ink2);border-radius:999px;padding:5px 12px;font-size:13px;cursor:pointer} .chip:hover{border-color:var(--acc);color:var(--ink)}
+ .actions{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap} .tps{font:600 12px var(--mono);color:var(--ink2);background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:4px 10px;min-width:1ch}
+ .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px} @media(max-width:760px){.grid,.steps{grid-template-columns:1fr}}
+ .col{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+ .col .head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);font-size:13px;color:var(--ink2)} .col .head b{color:var(--ink)}
+ .col .head::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--acc)} .col.int .head::before{background:var(--cat)}
+ .out{white-space:pre-wrap;min-height:120px;padding:14px 16px;font:14px/1.55 var(--mono);color:var(--ink)} .out:empty::before{content:"—";color:var(--mute)}
+ .viz{padding:0 16px 14px;border-top:1px dashed var(--line)}
+ .viz h4{margin:14px 0 6px;font-size:11px;color:var(--mute);font-weight:600;text-transform:uppercase;letter-spacing:.06em} .viz h4 span{font-weight:400;text-transform:none;letter-spacing:0}
+ .strip{display:flex;flex-wrap:wrap;gap:3px;font:12px var(--mono)} .strip span{padding:1px 4px;border-radius:4px;background:rgba(247,118,142,var(--a,0));border-bottom:3px solid rgba(122,162,247,var(--b,0));white-space:pre} .strip span.tpl{opacity:.4}
+ canvas.heat{width:100%;height:120px;display:block;background:var(--bg2);border:1px solid var(--line);border-radius:8px;image-rendering:pixelated}
+ .race div{display:flex;align-items:center;gap:8px;font:13px var(--mono);margin:3px 0} .race b{display:inline-block;height:10px;background:var(--acc);border-radius:3px} .race .cat b{background:var(--cat)} .race span.t{width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .race span.p{color:var(--mute);font-size:12px}
+ svg.stack{width:100%;height:52px;display:block}
+ .foot{margin-top:28px;color:var(--mute);font-size:13px;line-height:1.6} .foot a{color:var(--acc);text-decoration:none}
+ details.how{margin-top:16px} details.how summary{cursor:pointer;color:var(--ink2);font-weight:600} details.how p{color:var(--ink2);font-size:14px}
 </style></head>
 <body><main>
-<h1>Making Gemma forget cats, live in your browser</h1>
-<p class="sub">Gemma-2-2B-it runs locally on your GPU (WebGPU) or CPU (WASM). Nothing you type leaves your device.
-Pick an intervention from the <a href="https://github.com/alexjhuang/qwen-steer/blob/suppress-cats/GEMMA_REPORT.md">cat-suppression study</a> and compare it with the unmodified model side by side.</p>
+<header>
+ <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden="true"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#f7768e"/><stop offset="1" stop-color="#bb9af7"/></linearGradient></defs>
+  <path d="M12 44V22l8-10 6 8h4l6-8 8 10v22a4 4 0 0 1-4 4H16a4 4 0 0 1-4-4z" fill="url(#g)" opacity=".95"/><circle cx="22" cy="30" r="2.4" fill="#0b0d12"/><circle cx="34" cy="30" r="2.4" fill="#0b0d12"/><path d="M25 36h6l-3 3z" fill="#0b0d12"/>
+  <path d="M6 30 L14 28 M6 36 L14 35 M50 30 L42 28 M50 36 L42 35" stroke="#0b0d12" stroke-width="1.6" stroke-linecap="round" opacity=".55"/></svg>
+ <div><h1>Making Gemma <em>forget cats</em>, live in your browser</h1>
+  <p class="lede">Gemma-2-2B-it runs on your own GPU or CPU; nothing you type leaves this device. Pick an intervention from the <a href="https://github.com/alexjhuang/qwen-steer/blob/suppress-cats/GEMMA_REPORT.md">cat-suppression study</a>, generate, and watch the model change its mind token by token.</p></div>
+</header>
 
-<div class="panel">
- <div class="row">
-  <div><label>Backend</label><select id="backend"><option value="auto">auto (WebGPU if available)</option><option value="webgpu">WebGPU</option><option value="wasm">WASM (CPU)</option></select></div>
-  <div><label>Max new tokens</label><select id="maxtok"><option>48</option><option selected>96</option><option>160</option></select></div>
-  <div><label>Inside the model</label><label style="color:var(--ink);font-size:14px;margin:0"><input id="viz" type="checkbox" checked> show activations (a little slower)</label></div>
-  <div><button id="load">Load model (~2.2 GB, cached after first visit)</button></div>
- </div>
- <div id="status" style="margin-top:10px">Not loaded.</div><progress id="prog" value="0" max="1" hidden></progress>
+<div class="steps">
+ <div class="step active" id="s1"><span class="n">1</span><h3>Load the model</h3><p>~2.2 GB once, verified by hash, cached after that.</p></div>
+ <div class="step" id="s2"><span class="n">2</span><h3>Choose an intervention</h3><p>Clamp a feature, or project out a direction.</p></div>
+ <div class="step" id="s3"><span class="n">3</span><h3>Generate and compare</h3><p>Baseline on the left, edited model on the right.</p></div>
 </div>
 
-<div class="panel">
+<section class="card">
  <div class="row">
-  <div><label>Intervention</label>
-   <select id="mode">
-    <option value="none">none (baseline only)</option>
-    <option value="clamp8" selected>clamp the cat feature at layer 8 (negative push)</option>
-    <option value="clamp8_14">clamp cat features at layers 8 and 14</option>
-    <option value="ablate">project out the cat direction, layers 8-25</option>
-   </select></div>
-  <div><label>Strength <span id="strv">20</span></label><input id="strength" type="range" min="5" max="60" step="5" value="20"></div>
+  <div><label class="l">Backend</label><select id="backend"><option value="auto">Auto · WebGPU if available</option><option value="webgpu">WebGPU (GPU)</option><option value="wasm">WASM (CPU)</option></select></div>
+  <div><label class="l">Max new tokens</label><select id="maxtok"><option>48</option><option selected>96</option><option>160</option></select></div>
+  <div><label class="l">Inside the model</label><label class="toggle"><input id="viz" type="checkbox" checked> show activations</label></div>
+  <div class="auto"><button class="primary" id="load">Load model</button></div>
  </div>
- <label>Prompt</label>
+ <div id="status">Not loaded yet.</div><progress id="prog" value="0" max="1" hidden></progress>
+</section>
+
+<section class="card">
+ <label class="l">Intervention</label>
+ <div class="modes" id="modes">
+  <div class="mode" data-mode="none"><b>None</b><span>Run the stock model only.</span></div>
+  <div class="mode sel" data-mode="clamp8"><b>Clamp the cat feature · layer 8</b><span>Remove the sparse-autoencoder cat feature and push it negative. Fluent substitution, usually a dog.</span><em class="pill">strength applies</em></div>
+  <div class="mode" data-mode="clamp8_14"><b>Clamp at layers 8 and 14</b><span>Same, at two depths. Strongest feature-level effect; also suppresses free prose.</span><em class="pill">strength applies</em></div>
+  <div class="mode" data-mode="ablate"><b>Project out the cat direction</b><span>Subtract the cat direction from the residual stream at layers 8–25. No SAE involved.</span></div>
+ </div>
+ <select id="mode" hidden><option value="none">none</option><option value="clamp8" selected>clamp8</option><option value="clamp8_14">clamp8_14</option><option value="ablate">ablate</option></select>
+ <div class="row">
+  <div><label class="l">Strength</label><div class="strength"><input id="strength" type="range" min="5" max="60" step="5" value="20"><output id="strv">20</output></div></div>
+ </div>
+ <label class="l" style="margin-top:14px">Prompt</label>
  <textarea id="prompt">What animal says meow? Answer in a few words.</textarea>
- <div class="row" style="margin-top:10px">
-  <div style="flex:0"><button id="go" disabled>Generate</button></div>
-  <div style="flex:0"><button id="stop" disabled style="background:#2a2f3b;color:var(--ink)">Stop</button></div>
-  <div><span class="tag" id="tps"></span></div>
+ <div class="chips" id="chips">
+  <span class="chip">What is a baby cat called?</span><span class="chip">Write a short story about a cat.</span><span class="chip">Complete the phrase: "curiosity killed the ___".</span><span class="chip">¿Qué animal dice miau?</span><span class="chip">Explain why cats purr.</span><span class="chip">What animal says woof? Answer in a few words.</span>
  </div>
- <details style="margin-top:8px"><summary>Try these</summary>
-  <p class="sub">What is a baby cat called? · Write a short story about a cat. · Complete the phrase: "curiosity killed the ___". · ¿Qué animal dice miau? · Explain why cats purr.</p></details>
-</div>
+ <div class="actions"><button class="primary" id="go" disabled>Generate</button><button class="ghost" id="stop" disabled>Stop</button><span class="tps" id="tps"></span></div>
+</section>
 
 <div class="grid">
- <div class="panel"><div class="tag">baseline</div><div class="out" id="outA"></div>
+ <div class="col"><div class="head"><b>Baseline</b> · unmodified Gemma-2-2B-it</div><div class="out" id="outA"></div>
   <div class="viz" id="vizA">
-   <h4>Cat feature per token <span style="font-weight:400">(fill: layer 8, underline: layer 14)</span></h4><div class="strip" id="stripA"></div>
-   <h4>Cat direction, layer x token</h4><canvas class="heat" id="heatA" width="300" height="26"></canvas>
+   <h4>Cat feature per token <span>· fill: layer 8 · underline: layer 14</span></h4><div class="strip" id="stripA"></div>
+   <h4>Cat direction · layer × token</h4><canvas class="heat" id="heatA" width="300" height="26"></canvas>
    <h4>Next-token candidates</h4><div class="race" id="raceA"></div>
-   <h4>Layer stack <span style="font-weight:400">(glow: cat direction at the latest token; outlined: edited layers)</span></h4><svg class="stack" id="stackA" viewBox="0 0 260 56" preserveAspectRatio="none"></svg>
+   <h4>Layer stack <span>· glow: cat direction at the latest token</span></h4><svg class="stack" id="stackA" viewBox="0 0 260 56" preserveAspectRatio="none"></svg>
   </div></div>
- <div class="panel"><div class="tag" id="tagB">intervened</div><div class="out" id="outB"></div>
+ <div class="col int"><div class="head"><b>Intervened</b> · <span id="tagB">clamp the cat feature at layer 8</span></div><div class="out" id="outB"></div>
   <div class="viz" id="vizB">
-   <h4>Cat feature per token <span style="font-weight:400">(fill: layer 8, underline: layer 14)</span></h4><div class="strip" id="stripB"></div>
-   <h4>Cat direction, layer x token</h4><canvas class="heat" id="heatB" width="300" height="26"></canvas>
+   <h4>Cat feature per token <span>· fill: layer 8 · underline: layer 14</span></h4><div class="strip" id="stripB"></div>
+   <h4>Cat direction · layer × token</h4><canvas class="heat" id="heatB" width="300" height="26"></canvas>
    <h4>Next-token candidates</h4><div class="race" id="raceB"></div>
-   <h4>Layer stack <span style="font-weight:400">(glow: cat direction at the latest token; outlined: edited layers)</span></h4><svg class="stack" id="stackB" viewBox="0 0 260 56" preserveAspectRatio="none"></svg>
+   <h4>Layer stack <span>· glow: cat direction · outlined: edited layers</span></h4><svg class="stack" id="stackB" viewBox="0 0 260 56" preserveAspectRatio="none"></svg>
   </div></div>
 </div>
 
-<div class="panel">
- <details><summary>How it works</summary>
-  <p class="sub">The model is a 4-bit ONNX export of Gemma-2-2B-it with a few extra nodes compiled into every decoder layer. Each layer can subtract a direction from the residual stream, and layers 8 and 14 can additionally remove and push negative one sparse-autoencoder feature (Gemma Scope, 65k width). The features and the direction were found by contrasting cat sentences with matched dog sentences. With all inputs zero the graph is the stock model, which is what the left column runs. Full method, numbers and caveats in the <a href="https://github.com/alexjhuang/qwen-steer/blob/suppress-cats/GEMMA_REPORT.md">report</a>.</p>
-  <p class="sub">The activation views read the residual stream that the graph exposes after each layer. The feature strip is the sparse-autoencoder cat feature's activation on every token (red fill: layer 8, blue underline: layer 14); the heatmap is each token's projection on the cat direction at every layer, centred per layer; the candidates are the five most likely next tokens, cat-related ones in red; the stack glows with the cat-direction magnitude at the most recent token. The first token (BOS) is an attention sink and is left out.</p>
-  <p class="sub warn">Outputs are deliberately altered research artefacts. Strong settings produce substitutions ("Dog") and occasional nonsense; that is the point.</p>
- </details>
-</div>
+<details class="how"><summary>How it works</summary>
+ <p>The model is a 4-bit ONNX export of Gemma-2-2B-it with a few extra nodes compiled into every decoder layer. Each layer can subtract a direction from the residual stream, and layers 8 and 14 can additionally remove and push negative one Gemma Scope sparse-autoencoder feature. With all inputs zero the graph is the stock model, which is what the left column runs. The features and the direction were found by contrasting cat sentences with matched dog sentences.</p>
+ <p>The activation views read the residual stream the graph exposes after each layer. The strip is the cat feature's activation on every token; the heatmap is each token's projection on the cat direction at every layer, centred per layer; the candidates are the five most likely next tokens at the first answer step, cat-related ones in red; the stack glows with the cat-direction magnitude at the latest token. The first token (BOS) is an attention sink and is left out.</p>
+ <p class="warn">Outputs are deliberately altered research artefacts. Strong settings produce substitutions and occasional nonsense; that is the point.</p>
+</details>
+<p class="foot">Study, numbers and build scripts: <a href="https://github.com/alexjhuang/qwen-steer/tree/suppress-cats">alexjhuang/qwen-steer</a> · page source: <a href="https://github.com/alexjhuang/gemma-cat-steer">gemma-cat-steer</a> · model files: <a href="https://github.com/alexjhuang/gemma-cat-steer-weights">gemma-cat-steer-weights</a> (Gemma Terms of Use apply). Needs a desktop browser with WebGPU for the fast path and about 4 GB of free memory.</p>
 </main>
 <script type="module" src="app.js"></script>
 </body></html>

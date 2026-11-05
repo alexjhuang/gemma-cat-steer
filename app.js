@@ -86,6 +86,7 @@ $("load").onclick = async () => {
     io = introspect(session, usedManifest.dtype ?? (usedManifest.model.includes("f16") ? "float16" : "float32"));
     st.innerHTML = `<span class="ok">Ready on ${session.handler?.backend?.name ?? ep}.</span> ${io.nLayers} layers, KV dtype ${io.kvType}, ${verified} files verified by SHA-256.` + (io.hasResid ? "" : ` <span class="warn">This graph has no activation outputs (old cached copy); views are off. Clear site data and reload to get them.</span>`); prog.hidden = true;
     if (!io.hasResid) { $("viz").checked = false; $("viz").disabled = true; }
+    setStep(2);
     $("go").disabled = false;
   } catch (e) { st.innerHTML = `<span class="warn">Load failed: ${e.message}</span>`; $("load").disabled = false; console.error(e); }
 };
@@ -180,7 +181,12 @@ async function* generate(prompt, ivT, maxNew, viz) {
     const logits = res.logits; const V = logits.dims[2], off = (S - 1) * V; let best = 0, bv = -Infinity;
     const ld = logits.data; const read = logits.type === "float16" ? i => halfToFloat(ld[i]) : i => ld[i];
     let bad = 0; for (let i = 0; i < V; i++) { const v = read(off + i); if (v !== v || v === Infinity || v === -Infinity) { bad++; continue; } if (v > bv) { bv = v; best = i; } }
-    if (bad > V / 2 || bv === -Infinity) throw new Error(`model produced non-finite logits on this backend (${bad} of ${V}); switch Backend to WASM and reload`);
+    if (bad > V / 2 || bv === -Infinity) {
+      let where = "";
+      if (fetches) { for (let L = 0; L < NL; L++) { const d = toF32(res[`resid.${L}`]); let n = 0; for (let i = 0; i < d.length; i++) if (d[i] !== d[i] || d[i] === Infinity || d[i] === -Infinity) n++; if (n) { where = `; first non-finite residual at layer ${L} (${n} of ${d.length} values)`; break; } } }
+      const gpu = (await navigator.gpu?.requestAdapter?.())?.info; const adapter = gpu ? ` [${gpu.vendor ?? ""} ${gpu.architecture ?? ""} ${gpu.description ?? ""}]`.replace(/\s+/g, " ") : "";
+      throw new Error(`model produced non-finite logits on this backend (${bad} of ${V})${where}${adapter}; switch Backend to WASM`);
+    }
     if (viz) { const resid = Array.from({ length: NL }, (_, L) => toF32(res[`resid.${L}`])); viz.add(cur, resid, top5(logits, off, V), pos === 0, nTemplate); }
     for (const n of Object.keys(past)) { const pn = n.replace("past_key_values", "present"); past[n] = res[pn]; }
     pos = total; cur = [best]; out.push(best);
@@ -192,17 +198,21 @@ async function* generate(prompt, ivT, maxNew, viz) {
 function halfToFloat(h) { const s = (h & 0x8000) ? -1 : 1, e = (h >> 10) & 0x1f, m = h & 0x3ff; if (e === 0) return s * m * 2 ** -24; if (e === 31) return m ? NaN : s * Infinity; return s * (1 + m / 1024) * 2 ** (e - 15); }
 
 $("strength").oninput = e => $("strv").textContent = e.target.value;
+document.querySelectorAll("#modes .mode").forEach(m => m.onclick = () => { document.querySelectorAll("#modes .mode").forEach(x => x.classList.remove("sel")); m.classList.add("sel"); $("mode").value = m.dataset.mode; $("tagB").textContent = m.querySelector("b").textContent.toLowerCase(); setStep(session ? 3 : 1); });
+document.querySelectorAll("#chips .chip").forEach(c => c.onclick = () => { $("prompt").value = c.textContent; });
+function setStep(n) { for (let i = 1; i <= 3; i++) { const el = $("s" + i); el.classList.toggle("active", i === n); el.classList.toggle("done", i < n); } }
 $("backend").onchange = async () => {   // the backend is fixed when the session is created: drop it and ask for a new Load
   if (!session) return;
   try { await session.release?.(); } catch {} session = null; io = null;
-  $("go").disabled = true; $("load").disabled = false;
+  $("go").disabled = true; $("load").disabled = false; setStep(1);
   st.innerHTML = `Backend changed to <b>${$("backend").selectedOptions[0].textContent}</b>. Click <b>Load model</b> to switch (the other variant downloads once, ~2.2 GB, then is cached).`;
 };
 $("stop").onclick = () => { stopFlag = true; };
 $("go").onclick = async () => {
   stopFlag = false; $("go").disabled = true; $("stop").disabled = false; $("outA").textContent = $("outB").textContent = "";
   const prompt = $("prompt").value, mode = $("mode").value, strength = +$("strength").value, maxNew = +$("maxtok").value;
-  $("tagB").textContent = mode === "none" ? "(no intervention selected)" : $("mode").selectedOptions[0].textContent + (mode === "ablate" ? "" : `, strength ${strength}`);
+  const modeCard = document.querySelector(`#modes .mode[data-mode="${mode}"] b`)?.textContent ?? mode;
+  $("tagB").textContent = mode === "none" ? "no intervention selected" : modeCard.toLowerCase() + (mode === "ablate" ? "" : ` · strength ${strength}`); setStep(3);
   try {
     const useViz = $("viz").checked; document.querySelectorAll(".viz").forEach(e => e.style.display = useViz ? "" : "none");
     vizA.edited = () => false; vizB.edited = L => mode === "ablate" ? L >= 8 : mode === "clamp8" ? L === 8 : mode === "clamp8_14" ? (L === 8 || L === 14) : false;
